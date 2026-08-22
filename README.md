@@ -43,4 +43,4 @@ context-window usage. `/coms [--all]` force-refreshes it (`--all` reveals
 `--explicit` agents).
 
 Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_TIMEOUT_MS`,
-`PI_COMS_PING_INTERVAL_MS`.
+`PI_COMS_PING_INTERVAL_MS`, `PI_COMS_LINE_CAP_BYTES`.

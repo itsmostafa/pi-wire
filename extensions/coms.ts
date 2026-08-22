@@ -26,12 +26,21 @@ import * as crypto from "node:crypto";
 
 // ━━ Constants ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+function parseEnvInt(name: string, fallback: number, min?: number): number {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === "") return fallback;
+    const val = Number(raw);
+    if (!Number.isFinite(val) || Number.isNaN(val)) return fallback;
+    const clamped = min !== undefined ? Math.max(min, val) : val;
+    return clamped;
+}
+
 const COMS_DIR = process.env.PI_COMS_DIR || path.join(os.homedir(), ".pi", "coms");
-const MAX_HOPS = Number(process.env.PI_COMS_MAX_HOPS) || 5;
-const TIMEOUT_MS = Number(process.env.PI_COMS_TIMEOUT_MS) || 1_800_000;
-const PING_INTERVAL_MS = Number(process.env.PI_COMS_PING_INTERVAL_MS) || 2_000;
+const MAX_HOPS = parseEnvInt("PI_COMS_MAX_HOPS", 5, 1);
+const TIMEOUT_MS = parseEnvInt("PI_COMS_TIMEOUT_MS", 1_800_000, 0);
+const PING_INTERVAL_MS = parseEnvInt("PI_COMS_PING_INTERVAL_MS", 2_000, 100);
 const KEEPALIVE_INTERVAL_MS = 30_000;
-const LINE_CAP_BYTES = 64 * 1024;
+const LINE_CAP_BYTES = parseEnvInt("PI_COMS_LINE_CAP_BYTES", 10 * 1024 * 1024, 1024);
 
 const FALLBACK_PALETTE = [
     "#72F1B8", "#36F9F6", "#FF7EDB", "#FEDE5D",
@@ -392,7 +401,7 @@ function readOneLine(socket: net.Socket): Promise<string> {
                 if (settled) return;
                 settled = true;
                 socket.removeListener("data", onData);
-                reject(new Error("line too large"));
+                reject(new Error(`line too large (${buf.length} > ${LINE_CAP_BYTES} bytes)`));
                 return;
             }
             const nl = buf.indexOf("\n");
@@ -717,7 +726,7 @@ export default function (pi: ExtensionAPI) {
             if (buf.length > LINE_CAP_BYTES) {
                 handled = true;
                 socket.removeListener("data", onData);
-                nack(socket, "", "malformed envelope");
+                nack(socket, "", `line too large (${buf.length} > ${LINE_CAP_BYTES} bytes)`);
                 return;
             }
             const nl = buf.indexOf("\n");
@@ -1241,14 +1250,16 @@ export default function (pi: ExtensionAPI) {
                 target_name: target.name,
                 created_at: nowIso(),
             };
-            entry.timer = setTimeout(() => {
-                if (entry.result) return;
-                entry.result = { error: "timeout" };
-                try { entry.resolve(entry.result); } catch { /* ignore */ }
-                pendingReplies.delete(msg_id);
-            }, TIMEOUT_MS);
-            // Don't keep the event loop alive solely for this timer.
-            try { (entry.timer as any).unref?.(); } catch { /* ignore */ }
+            if (TIMEOUT_MS > 0) {
+                entry.timer = setTimeout(() => {
+                    if (entry.result) return;
+                    entry.result = { error: "timeout" };
+                    try { entry.resolve(entry.result); } catch { /* ignore */ }
+                    pendingReplies.delete(msg_id);
+                }, TIMEOUT_MS);
+                // Don't keep the event loop alive solely for this timer.
+                try { (entry.timer as any).unref?.(); } catch { /* ignore */ }
+            }
             pendingReplies.set(msg_id, entry);
 
             try {
@@ -1358,16 +1369,20 @@ export default function (pi: ExtensionAPI) {
                     details: { error: "unknown msg_id" },
                 };
             }
-            const timeoutMs = typeof params.timeout_ms === "number" && params.timeout_ms > 0
+            const timeoutMs = typeof params.timeout_ms === "number" && params.timeout_ms >= 0
                 ? params.timeout_ms
                 : TIMEOUT_MS;
 
-            const timed = new Promise<{ error: string }>((resolve) => {
-                const t = setTimeout(() => resolve({ error: "timeout" }), timeoutMs);
-                try { (t as any).unref?.(); } catch { /* ignore */ }
-            });
-
-            const winner = await Promise.race([entry.promise, timed]);
+            let winner: { response?: any; error?: string | null };
+            if (timeoutMs > 0) {
+                const timed = new Promise<{ error: string }>((resolve) => {
+                    const t = setTimeout(() => resolve({ error: "timeout" }), timeoutMs);
+                    try { (t as any).unref?.(); } catch { /* ignore */ }
+                });
+                winner = await Promise.race([entry.promise, timed]);
+            } else {
+                winner = await entry.promise;
+            }
             if ((winner as any).error) {
                 return {
                     content: [{ type: "text" as const, text: `coms_await: error — ${(winner as any).error}` }],
