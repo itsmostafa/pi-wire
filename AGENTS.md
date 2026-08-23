@@ -42,6 +42,6 @@ No build, no lint, no package.json. Stdlib only (`node:net`, `node:fs`, etc.) �
 ## Conventions
 
 - New code goes into the `extensions/coms/` module that owns the concern; `extensions/coms.ts` stays the thin composition root. Shared mutable state lives in the single `ComsState` object created in the entry and passed by reference — no module-level mutable state except the registry cache and the refresh guard.
-- Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_PING_INTERVAL_MS`. Transport timeouts are fixed, not configurable: 5s send cap (transport.ts `sendEnvelope`), 30s idle-socket cap (server.ts `connHandler`).
+- Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_PING_INTERVAL_MS`, `PI_COMS_LINE_CAP_BYTES`. Transport timeouts are fixed, not configurable: 5s send cap (transport.ts `sendEnvelope`), 30s idle-socket cap (server.ts `connHandler`).
 - Non-trivial logic changes require the test in `test-async.mjs` to still pass; extend it when touching the async contract.
 - Commit before refactors — the async rewrite sat uncommitted, which made the split's diff hard to review.

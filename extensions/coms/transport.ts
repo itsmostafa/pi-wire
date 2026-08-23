@@ -61,7 +61,7 @@ export function readOneLine(socket: net.Socket): Promise<string> {
                 if (settled) return;
                 settled = true;
                 socket.removeListener("data", onData);
-                reject(new Error("line too large"));
+                reject(new Error(`line too large (${buf.length} > ${LINE_CAP_BYTES} bytes)`));
                 return;
             }
             const nl = buf.indexOf("\n");

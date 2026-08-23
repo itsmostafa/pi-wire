@@ -52,4 +52,5 @@ A live pool widget under the editor shows peers, their models, and
 context-window usage. `/coms [--all]` force-refreshes it (`--all` reveals
 `--explicit` agents).
 
-Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_PING_INTERVAL_MS`.
+Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_PING_INTERVAL_MS`,
+`PI_COMS_LINE_CAP_BYTES`.

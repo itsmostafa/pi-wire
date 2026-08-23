@@ -171,7 +171,7 @@ export function createConnHandler(pi: ExtensionAPI, state: ComsState): (socket: 
             if (buf.length > LINE_CAP_BYTES) {
                 handled = true;
                 socket.removeListener("data", onData);
-                nack(socket, "", "malformed envelope");
+                nack(socket, "", `line too large (${buf.length} > ${LINE_CAP_BYTES} bytes)`);
                 return;
             }
             const nl = buf.indexOf("\n");

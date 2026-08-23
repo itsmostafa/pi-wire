@@ -8,11 +8,19 @@ import * as os from "node:os";
 
 // ━━ Constants ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+function parseEnvInt(name: string, fallback: number, min?: number): number {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === "") return fallback;
+    const val = Number(raw);
+    if (!Number.isFinite(val) || Number.isNaN(val)) return fallback;
+    return min !== undefined ? Math.max(min, val) : val;
+}
+
 export const COMS_DIR = process.env.PI_COMS_DIR || path.join(os.homedir(), ".pi", "coms");
-export const MAX_HOPS = Number(process.env.PI_COMS_MAX_HOPS) || 5;
-export const PING_INTERVAL_MS = Number(process.env.PI_COMS_PING_INTERVAL_MS) || 2_000;
+export const MAX_HOPS = parseEnvInt("PI_COMS_MAX_HOPS", 5, 1);
+export const PING_INTERVAL_MS = parseEnvInt("PI_COMS_PING_INTERVAL_MS", 2_000, 100);
 export const KEEPALIVE_INTERVAL_MS = 30_000;
-export const LINE_CAP_BYTES = 64 * 1024;
+export const LINE_CAP_BYTES = parseEnvInt("PI_COMS_LINE_CAP_BYTES", 10 * 1024 * 1024, 1024);
 
 export const FALLBACK_PALETTE = [
     "#72F1B8", "#36F9F6", "#FF7EDB", "#FEDE5D",
