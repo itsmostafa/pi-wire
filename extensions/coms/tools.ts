@@ -156,7 +156,8 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
         label: "Coms Respond",
         description:
             "Finish an inbound coms request asynchronously. Provide response to reply, or decline=true when no reply is useful. " +
-            "Call exactly once for each inbound request; never use it for ordinary user prompts or peer responses.",
+            "Call exactly once for each inbound request; never use it for ordinary user prompts or peer responses. " +
+            "If delivery fails (peer unreachable, response too large) the error is thrown and you may retry with a smaller payload.",
         promptSnippet: "Reply to or decline an inbound asynchronous coms request",
         promptGuidelines: [
             "For each inbound coms request, call coms_respond exactly once with its msg_id; provide response or set decline=true.",
@@ -185,7 +186,9 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
                     throw new Error("coms_respond: response must be valid JSON for this request");
                 }
             }
-            dispatchInboundResponse(pi, state, inbound, response, params.decline === true ? "declined" : null);
+            // Await the transport ack only (≤5s, never requester work). On failure
+            // the tool throws and the inbound is retained — the model can retry.
+            await dispatchInboundResponse(pi, state, inbound, response, params.decline === true ? "declined" : null);
             return {
                 content: [{ type: "text" as const, text: params.decline === true ? "Response declined." : "Response dispatched." }],
                 details: { msg_id: params.msg_id, declined: params.decline === true },

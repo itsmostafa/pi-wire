@@ -31,7 +31,7 @@ import { COMS_DIR, ComsState, KEEPALIVE_INTERVAL_MS, PING_INTERVAL_MS, RegistryE
 import { fallbackColor, hexFg, isValidHex, makeEndpoint, nowIso, readCliFlags, readFrontmatterFromArgv } from "./coms/util";
 import { agentsDir, removeRegistryEntry, resolveUniqueName, writeRegistryAtomic } from "./coms/registry";
 import { bindEndpoint } from "./coms/transport";
-import { createConnHandler, dispatchInboundResponse } from "./coms/server";
+import { createConnHandler, dispatchInboundResponse, sendErrorResponse } from "./coms/server";
 import { NamedEditor, installPoolWidget } from "./coms/widget";
 import { refreshPool } from "./coms/pool";
 import { registerTools } from "./coms/tools";
@@ -81,6 +81,9 @@ export default function (pi: ExtensionAPI) {
         identity: null,
         peerCards: new Map(),
         inboundQueue: new Map(),
+        seenResponseIds: new Set(),
+        shuttingDown: false,
+        inflightResponses: new Set(),
         includeExplicit: false,
         currentCtx: null,
         currentInbound: null,
@@ -256,11 +259,16 @@ export default function (pi: ExtensionAPI) {
         }
     });
 
-    pi.on("agent_end", () => {
-        // If the model omitted coms_respond, treat that explicit lack of response as
-        // a decline. Unstarted requests remain queued for the next continuation.
+    pi.on("agent_settled", () => {
+        // agent_end can precede auto-retry, compaction retry, or queued follow-up
+        // continuations — cleaning up there would prematurely finalize requests
+        // Pi is about to keep working on. agent_settled means Pi will not run
+        // again automatically, so started-but-unanswered requests are truly done.
+        // Unstarted requests remain queued for the next continuation.
         for (const inbound of state.inboundQueue.values()) {
-            if (inbound.started) dispatchInboundResponse(pi, state, inbound, null, "declined");
+            if (!inbound.started) continue;
+            state.inboundQueue.delete(inbound.msg_id);
+            void sendErrorResponse(pi, state, inbound, "interrupted");
         }
         state.currentInbound = null;
     });
@@ -278,15 +286,33 @@ export default function (pi: ExtensionAPI) {
     });
 
     // ━━ Clean shutdown ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    let shuttingDown = false;
-    async function cleanShutdown(): Promise<void> {
-        if (shuttingDown) return;
-        shuttingDown = true;
+    let shutdownPromise: Promise<void> | null = null;
+    function cleanShutdown(): Promise<void> {
+        if (!shutdownPromise) shutdownPromise = doCleanShutdown();
+        return shutdownPromise;
+    }
+    async function doCleanShutdown(): Promise<void> {
+        // Gate inbound admission immediately: server.close() only stops new
+        // accepts, so an already-accepted socket could still deliver a prompt
+        // after the notification snapshot below. handlePrompt/handleResponse
+        // nack while this flag is set.
+        state.shuttingDown = true;
         if (pingTimer) { try { clearInterval(pingTimer); } catch { /* ignore */ } pingTimer = null; }
         if (keepaliveTimer) { try { clearInterval(keepaliveTimer); } catch { /* ignore */ } keepaliveTimer = null; }
         if (server) {
             try { server.close(); } catch { /* ignore */ }
             server = null;
+        }
+        // Let in-flight coms_respond dispatches finish (each bounded by the
+        // fixed 5s transport cap); successes remove their queue entries
+        // themselves, failures retain them for the notification below.
+        await Promise.allSettled([...state.inflightResponses]);
+        // Notify every accepted-but-unanswered inbound request before teardown —
+        // otherwise the requester waits forever for a reply that will never come.
+        const pending = [...state.inboundQueue.values()];
+        for (const inbound of pending) state.inboundQueue.delete(inbound.msg_id);
+        if (pending.length > 0) {
+            await Promise.allSettled(pending.map((inbound) => sendErrorResponse(pi, state, inbound, "peer session ended")));
         }
         if (state.identity) {
             if (process.platform !== "win32") {
@@ -304,7 +330,9 @@ export default function (pi: ExtensionAPI) {
         }
     }
 
+    // pi routes Ctrl+C, Ctrl+D, SIGHUP and SIGTERM through session_shutdown
+    // (see docs/extensions.md lifecycle) — no raw process signal listeners here.
+    // Raw listeners would also accumulate across /reload since extensions are
+    // re-loaded in the same process.
     pi.on("session_shutdown", async () => { await cleanShutdown(); });
-    process.on("SIGINT", () => { void cleanShutdown(); });
-    process.on("SIGTERM", () => { void cleanShutdown(); });
 }

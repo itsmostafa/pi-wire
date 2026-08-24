@@ -54,3 +54,37 @@ context-window usage. `/coms [--all]` force-refreshes it (`--all` reveals
 
 Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_PING_INTERVAL_MS`,
 `PI_COMS_LINE_CAP_BYTES`.
+
+## Long-running tasks & reliability ceiling
+
+`coms` is designed for long-running single-hop work: a `coms_send` waits only
+for the transport ack (never the peer's answer — a 30-minute task holds no
+connection and trips no timeout), replies arrive as queued follow-ups, and
+peer liveness is PID-based, so a busy agent is never pruned mid-task.
+
+Guarantees and known ceilings (deliberate — no durable bookkeeping):
+
+- **Responses are at-most-once per msg_id, in-memory.** The receiver dedups
+  terminal responses by msg_id, so a responder retry after a lost ACK or a
+  racing "interrupted" cleanup can't double-deliver. The dedup cache is
+  bounded (512 entries, FIFO) — the guarantee holds within that window; a
+  duplicate of an evicted msg_id would be delivered again. Nothing survives
+  a hard kill: if the responder crashes or is SIGKILLed after acking
+  the prompt, the requester is never notified. Graceful shutdown
+  (`SIGINT`/`SIGTERM`, `/new`, `/resume`, `/fork`) best-effort notifies every
+  accepted-but-unanswered request ("peer session ended") before teardown.
+  Prompt retries are NOT deduped — each `coms_send` is a fresh msg_id, so a
+  model retry after a failed send creates a new request.
+- **One endpoint per session identity.** `/new`, `/resume`, `/fork`, `/reload`
+  replace the endpoint; late replies targeting the old socket are lost. Keep
+  the requester session alive for the whole task.
+- **No durable multi-hop relay.** If B delegates part of A's request to C and
+  B's run settles before C replies, A is told "interrupted". Long delegated
+  chains don't compose; keep long tasks single-hop.
+- **Payload bound is the transport line cap** (`PI_COMS_LINE_CAP_BYTES`, default
+  10 MB) — send file paths or summaries for large results, both to stay under
+  the cap and to avoid blowing the peer's model context.
+- **Responses are retried by the model, not the transport.** A failed
+  `coms_respond` delivery throws a tool error (inbound retained, retryable,
+  deduped at the receiver); an auto-cleanup (interrupted run, shutdown) is
+  fire-and-forget.

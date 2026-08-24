@@ -5,7 +5,9 @@
 
 import * as net from "node:net";
 import * as fs from "node:fs";
-import { Envelope, LINE_CAP_BYTES, Pong } from "./types";
+import { StringDecoder } from "node:string_decoder";
+import type { Envelope, Pong } from "./types";
+import { LINE_CAP_BYTES } from "./types";
 
 function probeStaleSocket(endpoint: string): Promise<"in_use" | "stale"> {
     return new Promise((resolve) => {
@@ -53,15 +55,20 @@ export async function bindEndpoint(
 
 export function readOneLine(socket: net.Socket): Promise<string> {
     return new Promise((resolve, reject) => {
+        const decoder = new StringDecoder("utf-8");
         let buf = "";
+        let bufBytes = 0;
         let settled = false;
         const onData = (chunk: Buffer) => {
-            buf += chunk.toString("utf-8");
-            if (buf.length > LINE_CAP_BYTES) {
+            // StringDecoder: a multibyte UTF-8 char split across TCP chunks
+            // must not be decoded per-chunk.
+            buf += decoder.write(chunk);
+            bufBytes += chunk.length; // byte cap, not JS string length (non-ASCII)
+            if (bufBytes > LINE_CAP_BYTES) {
                 if (settled) return;
                 settled = true;
                 socket.removeListener("data", onData);
-                reject(new Error(`line too large (${buf.length} > ${LINE_CAP_BYTES} bytes)`));
+                reject(new Error(`line too large (${bufBytes} > ${LINE_CAP_BYTES} bytes)`));
                 return;
             }
             const nl = buf.indexOf("\n");

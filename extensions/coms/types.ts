@@ -27,6 +27,9 @@ export const FALLBACK_PALETTE = [
     "#C792EA", "#FF8B39", "#4D9DE0", "#FFAA8B",
 ];
 
+/** Cap for the received-response dedup set (lost-ACK ambiguity guard). */
+export const SEEN_RESPONSE_IDS_CAP = 512;
+
 // ━━ Types ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export type EnvelopeType = "prompt" | "response" | "ping";
@@ -92,6 +95,8 @@ export interface InboundContext {
     sender_endpoint: string;
     response_schema?: object | null;
     started: boolean;
+    /** True while a coms_respond dispatch is in flight — guards double-send. */
+    sending?: boolean;
 }
 
 export interface Identity {
@@ -115,6 +120,13 @@ export interface ComsState {
     identity: Identity | null;
     peerCards: Map<string, AgentCard & { staleCount: number }>;
     inboundQueue: Map<string, InboundContext>;
+    /** msg_ids of terminal responses already delivered locally — dedup guard
+     *  for retries/auto-cleanup after a lost ACK. Not pending-request tracking. */
+    seenResponseIds: Set<string>;
+    /** True once shutdown began — gates inbound prompt/response admission. */
+    shuttingDown: boolean;
+    /** In-flight coms_respond dispatches, awaited before teardown completes. */
+    inflightResponses: Set<Promise<void>>;
     includeExplicit: boolean;
     currentCtx: ExtensionContext | null;
     currentInbound: InboundContext | null;
