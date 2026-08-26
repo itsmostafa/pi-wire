@@ -1,5 +1,5 @@
 /**
- * coms — shared constants, types, and cross-module state container.
+ * wire — shared constants, types, and cross-module state container.
  */
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -16,11 +16,11 @@ function parseEnvInt(name: string, fallback: number, min?: number): number {
     return min !== undefined ? Math.max(min, val) : val;
 }
 
-export const COMS_DIR = process.env.PI_COMS_DIR || path.join(os.homedir(), ".pi", "coms");
-export const MAX_HOPS = parseEnvInt("PI_COMS_MAX_HOPS", 5, 1);
-export const PING_INTERVAL_MS = parseEnvInt("PI_COMS_PING_INTERVAL_MS", 2_000, 100);
+export const WIRE_DIR = process.env.PI_WIRE_DIR || path.join(os.homedir(), ".pi", "wire");
+export const MAX_HOPS = parseEnvInt("PI_WIRE_MAX_HOPS", 5, 1);
+export const PING_INTERVAL_MS = parseEnvInt("PI_WIRE_PING_INTERVAL_MS", 2_000, 100);
 export const KEEPALIVE_INTERVAL_MS = 30_000;
-export const LINE_CAP_BYTES = parseEnvInt("PI_COMS_LINE_CAP_BYTES", 10 * 1024 * 1024, 1024);
+export const LINE_CAP_BYTES = parseEnvInt("PI_WIRE_LINE_CAP_BYTES", 10 * 1024 * 1024, 1024);
 
 export const FALLBACK_PALETTE = [
     "#72F1B8", "#36F9F6", "#FF7EDB", "#FEDE5D",
@@ -95,7 +95,7 @@ export interface InboundContext {
     sender_endpoint: string;
     response_schema?: object | null;
     started: boolean;
-    /** True while a coms_respond dispatch is in flight — guards double-send. */
+    /** True while a wire_respond dispatch is in flight — guards double-send. */
     sending?: boolean;
 }
 
@@ -114,9 +114,9 @@ export interface Identity {
 
 /**
  * Mutable state shared across all modules for one extension instance.
- * Created once in coms.ts (the composition root) and passed by reference.
+ * Created once in wire.ts (the composition root) and passed by reference.
  */
-export interface ComsState {
+export interface WireState {
     identity: Identity | null;
     peerCards: Map<string, AgentCard & { staleCount: number }>;
     inboundQueue: Map<string, InboundContext>;
@@ -125,7 +125,7 @@ export interface ComsState {
     seenResponseIds: Set<string>;
     /** True once shutdown began — gates inbound prompt/response admission. */
     shuttingDown: boolean;
-    /** In-flight coms_respond dispatches, awaited before teardown completes. */
+    /** In-flight wire_respond dispatches, awaited before teardown completes. */
     inflightResponses: Set<Promise<void>>;
     includeExplicit: boolean;
     currentCtx: ExtensionContext | null;

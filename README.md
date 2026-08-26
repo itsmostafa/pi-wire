@@ -1,7 +1,7 @@
-# coms — pi2pi extension
+# wire — pi2pi extension
 
 Two-way messaging between Pi agents on the same machine. Unix-socket transport.
-One global pool: every agent registers in `~/.pi/coms/agents/<name>.json` and
+One global pool: every agent registers in `~/.pi/wire/agents/<name>.json` and
 sees every other agent in the same working directory.
 
 ## Installation
@@ -9,7 +9,7 @@ sees every other agent in the same working directory.
 From the repo root:
 
 ```bash
-pi install /path/to/pi-coms/extensions/coms.ts
+pi install /path/to/pi-wire/extensions/wire.ts
 ```
 
 Or copy the repo's `.pi/settings.json` pattern — add the extension path to
@@ -26,7 +26,7 @@ cd ~/common-workspace && pi --name bob
 ```
 
 The extension is installed project-local (`.pi/settings.json`), so plain `pi`
-from `~/pi-coms` loads it — no `-e` needed.
+from `~/pi-wire` loads it — no `-e` needed.
 
 ## Identity
 
@@ -43,21 +43,21 @@ Other flags:
 
 ## Usage
 
-Either agent: `coms_list` → `coms_send`. Sending never waits for the peer's
+Either agent: `wire_list` → `wire_send`. Sending never waits for the peer's
 answer: the sender keeps working, and the reply arrives automatically as a
 follow-up message, queued until its current work finishes. Inbound prompts tell
-the receiver to use `coms_respond` to reply or explicitly decline.
+the receiver to use `wire_respond` to reply or explicitly decline.
 
 A live pool widget under the editor shows peers, their models, and
-context-window usage. `/coms [--all]` force-refreshes it (`--all` reveals
+context-window usage. `/wire [--all]` force-refreshes it (`--all` reveals
 `--explicit` agents).
 
-Env knobs: `PI_COMS_DIR`, `PI_COMS_MAX_HOPS`, `PI_COMS_PING_INTERVAL_MS`,
-`PI_COMS_LINE_CAP_BYTES`.
+Env knobs: `PI_WIRE_DIR`, `PI_WIRE_MAX_HOPS`, `PI_WIRE_PING_INTERVAL_MS`,
+`PI_WIRE_LINE_CAP_BYTES`.
 
 ## Long-running tasks & reliability ceiling
 
-`coms` is designed for long-running single-hop work: a `coms_send` waits only
+`wire` is designed for long-running single-hop work: a `wire_send` waits only
 for the transport ack (never the peer's answer — a 30-minute task holds no
 connection and trips no timeout), replies arrive as queued follow-ups, and
 peer liveness is PID-based, so a busy agent is never pruned mid-task.
@@ -73,7 +73,7 @@ Guarantees and known ceilings (deliberate — no durable bookkeeping):
   the prompt, the requester is never notified. Graceful shutdown
   (`SIGINT`/`SIGTERM`, `/new`, `/resume`, `/fork`) best-effort notifies every
   accepted-but-unanswered request ("peer session ended") before teardown.
-  Prompt retries are NOT deduped — each `coms_send` is a fresh msg_id, so a
+  Prompt retries are NOT deduped — each `wire_send` is a fresh msg_id, so a
   model retry after a failed send creates a new request.
 - **One endpoint per session identity.** `/new`, `/resume`, `/fork`, `/reload`
   replace the endpoint; late replies targeting the old socket are lost. Keep
@@ -81,10 +81,10 @@ Guarantees and known ceilings (deliberate — no durable bookkeeping):
 - **No durable multi-hop relay.** If B delegates part of A's request to C and
   B's run settles before C replies, A is told "interrupted". Long delegated
   chains don't compose; keep long tasks single-hop.
-- **Payload bound is the transport line cap** (`PI_COMS_LINE_CAP_BYTES`, default
+- **Payload bound is the transport line cap** (`PI_WIRE_LINE_CAP_BYTES`, default
   10 MB) — send file paths or summaries for large results, both to stay under
   the cap and to avoid blowing the peer's model context.
 - **Responses are retried by the model, not the transport.** A failed
-  `coms_respond` delivery throws a tool error (inbound retained, retryable,
+  `wire_respond` delivery throws a tool error (inbound retained, retryable,
   deduped at the receiver); an auto-cleanup (interrupted run, shutdown) is
   fire-and-forget.

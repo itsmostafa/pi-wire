@@ -1,15 +1,15 @@
 /**
- * coms — peer discovery: ping cycle, live pool refresh, and target resolution.
+ * wire — peer discovery: ping cycle, live pool refresh, and target resolution.
  */
 
 import * as crypto from "node:crypto";
-import { AgentCard, ComsState, PingEnvelope, Pong, RegistryEntry } from "./types";
+import { AgentCard, WireState, PingEnvelope, Pong, RegistryEntry } from "./types";
 import { nowIso } from "./util";
 import { liveEntries } from "./registry";
 import { sendEnvelope } from "./transport";
 import { installPoolWidget } from "./widget";
 
-export async function pingPeer(state: ComsState, endpoint: string): Promise<AgentCard | null> {
+export async function pingPeer(state: WireState, endpoint: string): Promise<AgentCard | null> {
     if (!state.identity) return null;
     const env: PingEnvelope = {
         type: "ping",
@@ -31,7 +31,7 @@ export async function pingPeer(state: ComsState, endpoint: string): Promise<Agen
 }
 
 let refreshingPool = false;
-export async function refreshPool(state: ComsState): Promise<void> {
+export async function refreshPool(state: WireState): Promise<void> {
     if (!state.identity || refreshingPool) return;
     refreshingPool = true;
     try {
@@ -93,7 +93,7 @@ export async function refreshPool(state: ComsState): Promise<void> {
     }
 }
 
-export function resolveTarget(state: ComsState, target: string): RegistryEntry | null {
+export function resolveTarget(state: WireState, target: string): RegistryEntry | null {
     // Global pool — any live agent is addressable.
     if (!state.identity) return null;
     const entries = liveEntries();

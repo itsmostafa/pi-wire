@@ -1,24 +1,24 @@
 /**
- * coms — tool registration: coms_list, coms_send, coms_respond.
+ * wire — tool registration: wire_list, wire_send, wire_respond.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import * as crypto from "node:crypto";
-import { ComsState, MAX_HOPS, PromptEnvelope, RegistryEntry } from "./types";
+import { WireState, MAX_HOPS, PromptEnvelope, RegistryEntry } from "./types";
 import { nowIso } from "./util";
 import { liveEntries } from "./registry";
 import { sendEnvelope } from "./transport";
 import { dispatchInboundResponse } from "./server";
 import { pingPeer, resolveTarget } from "./pool";
 
-export function registerTools(pi: ExtensionAPI, state: ComsState): void {
+export function registerTools(pi: ExtensionAPI, state: WireState): void {
     pi.registerTool({
-        name: "coms_list",
-        label: "Coms List",
+        name: "wire_list",
+        label: "Wire List",
         description:
-            "List peer agents discoverable via coms. Returns names, models, and live context-window usage. " +
+            "List peer agents discoverable via wire. Returns names, models, and live context-window usage. " +
             "include_explicit=true reveals agents marked --explicit.",
         parameters: Type.Object({
             include_explicit: Type.Optional(Type.Boolean({ description: "Include agents launched with --explicit. Default false." })),
@@ -66,7 +66,7 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
             };
         },
         renderCall(_args, theme) {
-            return new Text(theme.fg("toolTitle", theme.bold("coms_list")), 0, 0);
+            return new Text(theme.fg("toolTitle", theme.bold("wire_list")), 0, 0);
         },
         renderResult(result, options, theme) {
             const details = result.details as any;
@@ -85,8 +85,8 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
     });
 
     pi.registerTool({
-        name: "coms_send",
-        label: "Coms Send",
+        name: "wire_send",
+        label: "Wire Send",
         description:
             "Send an asynchronous request to a peer. Returns a msg_id once the peer accepts it; never waits for its response. " +
             "The peer's reply arrives automatically as a follow-up message, queued until this agent's current work finishes. " +
@@ -99,15 +99,15 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
         renderShell: "self",
         async execute(_callId, params) {
             if (!state.identity) {
-                throw new Error("coms not initialised");
+                throw new Error("wire not initialised");
             }
             const target = resolveTarget(state, params.target);
             if (!target) {
-                throw new Error(`coms: no live agent matching "${params.target}"`);
+                throw new Error(`wire: no live agent matching "${params.target}"`);
             }
             const hops = state.currentInbound ? state.currentInbound.hops + 1 : 0;
             if (hops >= MAX_HOPS) {
-                throw new Error(`coms: hop limit reached (${hops} >= ${MAX_HOPS})`);
+                throw new Error(`wire: hop limit reached (${hops} >= ${MAX_HOPS})`);
             }
             const msg_id = crypto.randomUUID();
             const env: PromptEnvelope = {
@@ -127,7 +127,7 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
             await sendEnvelope(target.endpoint, env);
 
             try {
-                pi.appendEntry("coms-log", {
+                pi.appendEntry("wire-log", {
                     event: "outbound_prompt",
                     msg_id,
                     target: target.name,
@@ -138,7 +138,7 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
             }
 
             return {
-                content: [{ type: "text" as const, text: `coms_send → ${target.name}\nmsg_id ${msg_id}\nhops ${hops}` }],
+                content: [{ type: "text" as const, text: `wire_send → ${target.name}\nmsg_id ${msg_id}\nhops ${hops}` }],
                 details: { msg_id, target: target.name, target_session: target.session_id, hops },
             };
         },
@@ -152,15 +152,15 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
     });
 
     pi.registerTool({
-        name: "coms_respond",
-        label: "Coms Respond",
+        name: "wire_respond",
+        label: "Wire Respond",
         description:
-            "Finish an inbound coms request asynchronously. Provide response to reply, or decline=true when no reply is useful. " +
+            "Finish an inbound wire request asynchronously. Provide response to reply, or decline=true when no reply is useful. " +
             "Call exactly once for each inbound request; never use it for ordinary user prompts or peer responses. " +
             "If delivery fails (peer unreachable, response too large) the error is thrown and you may retry with a smaller payload.",
-        promptSnippet: "Reply to or decline an inbound asynchronous coms request",
+        promptSnippet: "Reply to or decline an inbound asynchronous wire request",
         promptGuidelines: [
-            "For each inbound coms request, call coms_respond exactly once with its msg_id; provide response or set decline=true.",
+            "For each inbound wire request, call wire_respond exactly once with its msg_id; provide response or set decline=true.",
         ],
         parameters: Type.Object({
             msg_id: Type.String({ description: "Inbound request id shown in the peer message." }),
@@ -170,12 +170,12 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
         renderShell: "self",
         async execute(_callId, params) {
             const inbound = state.inboundQueue.get(params.msg_id);
-            if (!inbound) throw new Error(`coms_respond: unknown or completed msg_id ${params.msg_id}`);
+            if (!inbound) throw new Error(`wire_respond: unknown or completed msg_id ${params.msg_id}`);
             if (params.decline === true && params.response !== undefined) {
-                throw new Error("coms_respond: provide response or decline=true, not both");
+                throw new Error("wire_respond: provide response or decline=true, not both");
             }
             if (params.decline !== true && params.response === undefined) {
-                throw new Error("coms_respond: response is required unless decline=true");
+                throw new Error("wire_respond: response is required unless decline=true");
             }
 
             let response = params.decline === true ? null : params.response;
@@ -183,7 +183,7 @@ export function registerTools(pi: ExtensionAPI, state: ComsState): void {
                 try {
                     response = JSON.parse(response);
                 } catch {
-                    throw new Error("coms_respond: response must be valid JSON for this request");
+                    throw new Error("wire_respond: response must be valid JSON for this request");
                 }
             }
             // Await the transport ack only (≤5s, never requester work). On failure

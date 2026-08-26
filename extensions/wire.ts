@@ -1,23 +1,23 @@
 /**
- * coms — Peer-to-peer messaging between Pi agents on the same machine
+ * wire — Peer-to-peer messaging between Pi agents on the same machine
  *
  * Each agent listens on a single endpoint (unix socket on POSIX, named pipe on
  * Windows) and discovers peers through registry files under
- * ~/.pi/coms/agents/<name>.json — one global pool, all agents see each other.
+ * ~/.pi/wire/agents/<name>.json — one global pool, all agents see each other.
  *
- * Composition root: registers flags, renderers, tools, hooks, the /coms
+ * Composition root: registers flags, renderers, tools, hooks, the /wire
  * command, and owns the session lifecycle (bind, registry, ping/keepalive
- * cycles, clean shutdown). All logic lives in ./coms/*:
- *   types.ts     constants, envelopes, shared ComsState
+ * cycles, clean shutdown). All logic lives in ./wire/*:
+ *   types.ts     constants, envelopes, shared WireState
  *   util.ts      colors, frontmatter, identity resolution
- *   registry.ts  ~/.pi/coms/agents I/O + live-entry cache
+ *   registry.ts  ~/.pi/wire/agents I/O + live-entry cache
  *   transport.ts socket bind, line framing, envelope send
  *   server.ts    inbound connection handlers, respond dispatch
  *   widget.ts    NamedEditor + live pool widget
  *   pool.ts      ping cycle, peer discovery, target resolution
- *   tools.ts     coms_list / coms_send / coms_respond
+ *   tools.ts     wire_list / wire_send / wire_respond
  *
- * Usage: pi -e extensions/coms.ts
+ * Usage: pi -e extensions/wire.ts
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -27,14 +27,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 
-import { COMS_DIR, ComsState, KEEPALIVE_INTERVAL_MS, PING_INTERVAL_MS, RegistryEntry } from "./coms/types";
-import { fallbackColor, hexFg, isValidHex, makeEndpoint, nowIso, readCliFlags, readFrontmatterFromArgv } from "./coms/util";
-import { agentsDir, removeRegistryEntry, resolveUniqueName, writeRegistryAtomic } from "./coms/registry";
-import { bindEndpoint } from "./coms/transport";
-import { createConnHandler, dispatchInboundResponse, sendErrorResponse } from "./coms/server";
-import { NamedEditor, installPoolWidget } from "./coms/widget";
-import { refreshPool } from "./coms/pool";
-import { registerTools } from "./coms/tools";
+import { WIRE_DIR, WireState, KEEPALIVE_INTERVAL_MS, PING_INTERVAL_MS, RegistryEntry } from "./wire/types";
+import { fallbackColor, hexFg, isValidHex, makeEndpoint, nowIso, readCliFlags, readFrontmatterFromArgv } from "./wire/util";
+import { agentsDir, removeRegistryEntry, resolveUniqueName, writeRegistryAtomic } from "./wire/registry";
+import { bindEndpoint } from "./wire/transport";
+import { createConnHandler, dispatchInboundResponse, sendErrorResponse } from "./wire/server";
+import { NamedEditor, installPoolWidget } from "./wire/widget";
+import { refreshPool } from "./wire/pool";
+import { registerTools } from "./wire/tools";
 
 // ━━ Default export ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -59,7 +59,7 @@ export default function (pi: ExtensionAPI) {
         default: false,
     });
 
-    pi.registerMessageRenderer("coms-inbound", (message, { outputPad }, theme) => {
+    pi.registerMessageRenderer("wire-inbound", (message, { outputPad }, theme) => {
         const sender = (message.details as { sender_name: string }).sender_name;
         const tag = `@${sender}>`;
         const box = new Box(outputPad, 1, (text) => text);
@@ -67,7 +67,7 @@ export default function (pi: ExtensionAPI) {
         return box;
     });
 
-    pi.registerMessageRenderer("coms-response", (message, { outputPad }, theme) => {
+    pi.registerMessageRenderer("wire-response", (message, { outputPad }, theme) => {
         const sender = (message.details as { sender_name: string }).sender_name;
         const tag = `@${sender}<`;
         const box = new Box(outputPad, 1, (text) => text);
@@ -77,7 +77,7 @@ export default function (pi: ExtensionAPI) {
 
     // Shared mutable state — one instance per extension load, threaded through
     // every module that needs it.
-    const state: ComsState = {
+    const state: WireState = {
         identity: null,
         peerCards: new Map(),
         inboundQueue: new Map(),
@@ -114,7 +114,7 @@ export default function (pi: ExtensionAPI) {
         const name = resolveUniqueName(desiredName);
         if (name !== desiredName) {
             try {
-                pi.appendEntry("coms-log", { event: "name_collision", desired: desiredName, assigned: name });
+                pi.appendEntry("wire-log", { event: "name_collision", desired: desiredName, assigned: name });
             } catch {
                 // best-effort
             }
@@ -138,11 +138,11 @@ export default function (pi: ExtensionAPI) {
         try {
             fs.mkdirSync(agentsDir(), { recursive: true });
             if (process.platform !== "win32") {
-                fs.mkdirSync(path.join(COMS_DIR, "sockets"), { recursive: true });
-                try { fs.chmodSync(COMS_DIR, 0o700); } catch { /* best-effort */ }
+                fs.mkdirSync(path.join(WIRE_DIR, "sockets"), { recursive: true });
+                try { fs.chmodSync(WIRE_DIR, 0o700); } catch { /* best-effort */ }
             }
         } catch (err) {
-            ctx.ui?.notify?.(`📡 coms: failed to create dirs — ${err instanceof Error ? err.message : String(err)}`, "error");
+            ctx.ui?.notify?.(`📡 wire: failed to create dirs — ${err instanceof Error ? err.message : String(err)}`, "error");
             return;
         }
 
@@ -150,7 +150,7 @@ export default function (pi: ExtensionAPI) {
         try {
             server = await bindEndpoint(endpoint, createConnHandler(pi, state));
         } catch (err) {
-            ctx.ui?.notify?.(`📡 coms: bind failed — ${err instanceof Error ? err.message : String(err)}`, "error");
+            ctx.ui?.notify?.(`📡 wire: bind failed — ${err instanceof Error ? err.message : String(err)}`, "error");
             return;
         }
 
@@ -172,7 +172,7 @@ export default function (pi: ExtensionAPI) {
         try {
             registryFile = writeRegistryAtomic(entry);
         } catch (err) {
-            ctx.ui?.notify?.(`📡 coms: registry write failed — ${err instanceof Error ? err.message : String(err)}`, "error");
+            ctx.ui?.notify?.(`📡 wire: registry write failed — ${err instanceof Error ? err.message : String(err)}`, "error");
             try { server?.close(); } catch { /* ignore */ }
             return;
         }
@@ -193,14 +193,14 @@ export default function (pi: ExtensionAPI) {
 
         // 5. Audit log: boot.
         try {
-            pi.appendEntry("coms-log", { event: "boot", session_id, name });
+            pi.appendEntry("wire-log", { event: "boot", session_id, name });
         } catch {
             // best-effort
         }
 
         // 6. Surface presence in the UI + install the live pool widget.
         try {
-            ctx.ui.setStatus("coms", name);
+            ctx.ui.setStatus("wire", name);
             installPoolWidget(state, ctx);
             if (ctx.hasUI && (flags.name || fm.name)) {
                 // Only label the editor when the agent was deliberately named;
@@ -250,7 +250,7 @@ export default function (pi: ExtensionAPI) {
     // Track the request whose follow-up is actually being processed, rather than
     // whichever request happened to arrive most recently.
     pi.on("message_start", (event) => {
-        if (event.message.role !== "custom" || event.message.customType !== "coms-inbound") return;
+        if (event.message.role !== "custom" || event.message.customType !== "wire-inbound") return;
         const msg_id = (event.message.details as { msg_id?: string } | undefined)?.msg_id;
         const inbound = msg_id ? state.inboundQueue.get(msg_id) : undefined;
         if (inbound) {
@@ -273,13 +273,13 @@ export default function (pi: ExtensionAPI) {
         state.currentInbound = null;
     });
 
-    // ━━ /coms slash command ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    pi.registerCommand("coms", {
-        description: "Force-refresh the coms pool widget (--all toggles hidden --explicit agents)",
+    // ━━ /wire slash command ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    pi.registerCommand("wire", {
+        description: "Force-refresh the wire pool widget (--all toggles hidden --explicit agents)",
         handler: async (args, ctx) => {
             if ((args ?? "").trim().includes("--all")) {
                 state.includeExplicit = !state.includeExplicit;
-                try { ctx.ui.notify(`coms: include_explicit = ${state.includeExplicit}`, "info"); } catch { /* best-effort */ }
+                try { ctx.ui.notify(`wire: include_explicit = ${state.includeExplicit}`, "info"); } catch { /* best-effort */ }
             }
             await refreshPool(state);
         },
@@ -303,7 +303,7 @@ export default function (pi: ExtensionAPI) {
             try { server.close(); } catch { /* ignore */ }
             server = null;
         }
-        // Let in-flight coms_respond dispatches finish (each bounded by the
+        // Let in-flight wire_respond dispatches finish (each bounded by the
         // fixed 5s transport cap); successes remove their queue entries
         // themselves, failures retain them for the notification below.
         await Promise.allSettled([...state.inflightResponses]);
@@ -320,13 +320,13 @@ export default function (pi: ExtensionAPI) {
             }
             try { removeRegistryEntry(state.identity.name); } catch { /* ignore */ }
             try {
-                pi.appendEntry("coms-log", { event: "shutdown", session_id: state.identity.session_id });
+                pi.appendEntry("wire-log", { event: "shutdown", session_id: state.identity.session_id });
             } catch {
                 // best-effort
             }
         }
         if (state.currentCtx?.hasUI) {
-            try { state.currentCtx.ui.setWidget("coms-pool", undefined); } catch { /* ignore */ }
+            try { state.currentCtx.ui.setWidget("wire-pool", undefined); } catch { /* ignore */ }
         }
     }
 

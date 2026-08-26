@@ -1,5 +1,5 @@
 {
   "packages": [
-    "../extensions/coms.ts"
+    "../extensions/wire.ts"
   ]
 }

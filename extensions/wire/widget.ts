@@ -1,12 +1,12 @@
 /**
- * coms — pool widget: live peer list under the editor, plus the NamedEditor
+ * wire — pool widget: live peer list under the editor, plus the NamedEditor
  * that shows the agent's name in the input border.
  */
 
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { CustomEditor } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { ComsState } from "./types";
+import { WireState } from "./types";
 import { abbreviateModel, hexFg } from "./util";
 import { peekCachedEntries } from "./registry";
 
@@ -33,7 +33,7 @@ export class NamedEditor extends CustomEditor {
 }
 
 // ━━ Pool widget rendering ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export function renderPool(state: ComsState, width: number, theme: Theme): string[] {
+export function renderPool(state: WireState, width: number, theme: Theme): string[] {
     // Peer rows only — own name lives in the editor border top-right.
     // Render from the refreshPool cache — zero fs on the render path.
     const registryEntries = peekCachedEntries();
@@ -128,10 +128,10 @@ export function renderPool(state: ComsState, width: number, theme: Theme): strin
     return out;
 }
 
-export function installPoolWidget(state: ComsState, ctx: ExtensionContext): void {
+export function installPoolWidget(state: WireState, ctx: ExtensionContext): void {
     if (!ctx.hasUI) return;
     try {
-        ctx.ui.setWidget("coms-pool", (_tui, theme) => ({
+        ctx.ui.setWidget("wire-pool", (_tui, theme) => ({
             invalidate() {},
             render(width: number): string[] {
                 return renderPool(state, width, theme);

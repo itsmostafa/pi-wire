@@ -4,10 +4,10 @@ import { register } from "node:module";
 import test from "node:test";
 const fs = { unlinkSync: fsUnlinkSync };
 
-// Resolve hook for extensionless TS imports inside extensions/coms/.
-register(new URL("./coms-test-resolve-hook.mjs", import.meta.url));
+// Resolve hook for extensionless TS imports inside extensions/wire/.
+register(new URL("./wire-test-resolve-hook.mjs", import.meta.url));
 
-// Collect every .ts source under extensions/ (entry + coms/ modules), in a
+// Collect every .ts source under extensions/ (entry + wire/ modules), in a
 // deterministic order, and concatenate — the async contract spans files.
 function collectTs(dir, out = []) {
     for (const name of readdirSync(dir).sort()) {
@@ -21,29 +21,29 @@ const source = collectTs(new URL("./extensions", import.meta.url).pathname)
     .map((f) => readFileSync(f, "utf8"))
     .join("\n");
 
-test("coms requests and responses stay asynchronous — no polling, no bookkeeping", () => {
+test("wire requests and responses stay asynchronous — no polling, no bookkeeping", () => {
     // No blocking poll tool, no pending-reply map, no timeout timers.
-    assert.ok(!source.includes('name: "coms_get"'));
+    assert.ok(!source.includes('name: "wire_get"'));
     assert.ok(!source.includes("pendingReplies"));
     assert.ok(!source.includes("TIMEOUT_MS"));
 
     // Sender waits only for the transport ack, never for the answer.
-    const send = source.slice(source.indexOf('name: "coms_send"'), source.indexOf('name: "coms_respond"'));
+    const send = source.slice(source.indexOf('name: "wire_send"'), source.indexOf('name: "wire_respond"'));
     assert.match(send, /await sendEnvelope\(target\.endpoint, env\)/);
     assert.ok(!send.includes("setTimeout"));
 
     // Replies auto-deliver as follow-ups, queued until the sender's current work finishes.
-    assert.match(source, /customType: "coms-response"[\s\S]*deliverAs: "followUp", triggerTurn: true/);
-    assert.match(source, /name: "coms_respond"[\s\S]*decline/);
+    assert.match(source, /customType: "wire-response"[\s\S]*deliverAs: "followUp", triggerTurn: true/);
+    assert.match(source, /name: "wire_respond"[\s\S]*decline/);
 });
 
-test("coms_respond dispatch is truthful — transport ack awaited, failure retryable", () => {
-    // coms_respond awaits the dispatch so a failed delivery becomes a tool error,
+test("wire_respond dispatch is truthful — transport ack awaited, failure retryable", () => {
+    // wire_respond awaits the dispatch so a failed delivery becomes a tool error,
     // but only the transport ack (bounded by sendEnvelope's fixed cap) — never
     // requester-side agent work.
-    const respond = source.slice(source.indexOf('name: "coms_respond"'));
+    const respond = source.slice(source.indexOf('name: "wire_respond"'));
     assert.match(respond, /await dispatchInboundResponse\(/);
-    assert.ok(!respond.includes("coms_await"));
+    assert.ok(!respond.includes("wire_await"));
 
     // dispatchInboundResponse retains the inbound queue entry on failure (delete
     // happens only in the transport-ack success handler) so the model can retry.
@@ -105,7 +105,7 @@ test("shutdown closes the listener before snapshotting pending requests", () => 
     const shutdown = source.slice(source.indexOf("async function doCleanShutdown"));
     assert.ok(shutdown.indexOf("server.close()") < shutdown.indexOf("[...state.inboundQueue.values()]"),
         "server must stop accepting prompts before the notification snapshot");
-    // In-flight coms_respond dispatches are awaited (bounded ~5s), not raced.
+    // In-flight wire_respond dispatches are awaited (bounded ~5s), not raced.
     assert.match(shutdown, /await Promise\.allSettled\(\[\.\.\.state\.inflightResponses\]\)/);
     // Concurrent shutdown callers share one in-flight cleanup.
     assert.match(source, /if \(!shutdownPromise\) shutdownPromise = doCleanShutdown\(\)/);
@@ -123,10 +123,10 @@ test("wire framing decodes multibyte UTF-8 safely across chunk boundaries", () =
 // handling are also exercised over real sockets. transport.ts and server.ts
 // import only stdlib modules at runtime, so they load without pi installed.
 
-process.env.PI_COMS_LINE_CAP_BYTES = "4096"; // small cap for the byte-cap test
+process.env.PI_WIRE_LINE_CAP_BYTES = "4096"; // small cap for the byte-cap test
 
-const { readOneLine } = await import(new URL("./extensions/coms/transport.ts", import.meta.url));
-const { createConnHandler, dispatchInboundResponse } = await import(new URL("./extensions/coms/server.ts", import.meta.url));
+const { readOneLine } = await import(new URL("./extensions/wire/transport.ts", import.meta.url));
+const { createConnHandler, dispatchInboundResponse } = await import(new URL("./extensions/wire/server.ts", import.meta.url));
 const net = await import("node:net");
 const os = await import("node:os");
 const path = await import("node:path");
@@ -230,9 +230,9 @@ test("inbound admission is gated during shutdown", async () => {
     srv.close();
 });
 
-test("coms_respond dispatch: success removes the inbound, failure retains it", async () => {
+test("wire_respond dispatch: success removes the inbound, failure retains it", async () => {
     const pi = { sendMessage: () => {}, appendEntry: () => {} };
-    const sockPath = path.join(os.tmpdir(), `pi-coms-test-${process.pid}-${Date.now()}.sock`);
+    const sockPath = path.join(os.tmpdir(), `pi-wire-test-${process.pid}-${Date.now()}.sock`);
     let replyType = "ack";
     const peer = net.createServer((s) => {
         let buf = "";

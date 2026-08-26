@@ -1,6 +1,6 @@
 /**
- * coms — inbound connection handling: envelope validation, prompt/response/ping
- * dispatch, and the outbound response path for coms_respond.
+ * wire — inbound connection handling: envelope validation, prompt/response/ping
+ * dispatch, and the outbound response path for wire_respond.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -8,7 +8,7 @@ import * as net from "node:net";
 import { StringDecoder } from "node:string_decoder";
 import type {
     AgentCard,
-    ComsState,
+    WireState,
     Envelope,
     InboundContext,
     PingEnvelope,
@@ -38,7 +38,7 @@ function nack(socket: net.Socket, msg_id: string, error: string): void {
     try { socket.end(); } catch { /* ignore */ }
 }
 
-function handlePrompt(pi: ExtensionAPI, state: ComsState, socket: net.Socket, env: PromptEnvelope): void {
+function handlePrompt(pi: ExtensionAPI, state: WireState, socket: net.Socket, env: PromptEnvelope): void {
     // Admission gate: during shutdown the queue snapshot is taken and this
     // prompt could never be answered — reject it so the sender knows now.
     if (state.shuttingDown) {
@@ -70,10 +70,10 @@ function handlePrompt(pi: ExtensionAPI, state: ComsState, socket: net.Socket, en
     try {
         pi.sendMessage(
             {
-                customType: "coms-inbound",
+                customType: "wire-inbound",
                 content: `@${env.sender_name}>\n\n${env.prompt}\n\n` +
-                    `[Async coms request ${env.msg_id}. Decide whether a reply is useful. ` +
-                    `Before finishing, call coms_respond exactly once with this msg_id: ` +
+                    `[Async wire request ${env.msg_id}. Decide whether a reply is useful. ` +
+                    `Before finishing, call wire_respond exactly once with this msg_id: ` +
                     `provide response, or set decline=true.${schema} Do not wait for the sender.]`,
                 display: true,
                 details: {
@@ -95,7 +95,7 @@ function handlePrompt(pi: ExtensionAPI, state: ComsState, socket: net.Socket, en
     // 4. Ack + audit log
     ackOk(socket, env.msg_id);
     try {
-        pi.appendEntry("coms-log", {
+        pi.appendEntry("wire-log", {
             event: "inbound_prompt",
             msg_id: env.msg_id,
             sender: env.sender_session,
@@ -106,7 +106,7 @@ function handlePrompt(pi: ExtensionAPI, state: ComsState, socket: net.Socket, en
     }
 }
 
-function handleResponse(pi: ExtensionAPI, state: ComsState, socket: net.Socket, env: ResponseEnvelope): void {
+function handleResponse(pi: ExtensionAPI, state: WireState, socket: net.Socket, env: ResponseEnvelope): void {
     // Admission gate: during shutdown the follow-up could never be delivered;
     // nack so the responder retains the inbound and sees the failure.
     if (state.shuttingDown) {
@@ -114,7 +114,7 @@ function handleResponse(pi: ExtensionAPI, state: ComsState, socket: net.Socket, 
         return;
     }
     // Dedup by msg_id: a lost ACK makes delivery ambiguous — the responder may
-    // retry coms_respond or fire agent_settled cleanup, delivering a second
+    // retry wire_respond or fire agent_settled cleanup, delivering a second
     // (possibly contradictory) terminal message for the same request. The
     // first terminal message wins; later ones are acked and dropped.
     if (state.seenResponseIds.has(env.msg_id)) {
@@ -142,7 +142,7 @@ function handleResponse(pi: ExtensionAPI, state: ComsState, socket: net.Socket, 
     try {
         pi.sendMessage(
             {
-                customType: "coms-response",
+                customType: "wire-response",
                 content: text,
                 display: true,
                 details: { msg_id: env.msg_id, sender_name: senderName, error: env.error ?? null },
@@ -158,7 +158,7 @@ function handleResponse(pi: ExtensionAPI, state: ComsState, socket: net.Socket, 
     ackOk(socket, env.msg_id);
 }
 
-function handlePing(state: ComsState, socket: net.Socket, env: PingEnvelope): void {
+function handlePing(state: WireState, socket: net.Socket, env: PingEnvelope): void {
     const ctx = state.currentCtx;
     const ident = state.identity;
     const pct = ctx ? Math.round(ctx.getContextUsage()?.percent ?? 0) : 0;
@@ -189,7 +189,7 @@ function isValidEnvelope(obj: any): obj is Envelope {
     );
 }
 
-export function createConnHandler(pi: ExtensionAPI, state: ComsState): (socket: net.Socket) => void {
+export function createConnHandler(pi: ExtensionAPI, state: WireState): (socket: net.Socket) => void {
     return function connHandler(socket: net.Socket): void {
         // ponytail: idle cap so stalled inbound connections can't accumulate
         socket.setTimeout(30_000, () => socket.destroy());
@@ -253,7 +253,7 @@ export function createConnHandler(pi: ExtensionAPI, state: ComsState): (socket: 
  * answer (interrupted run, shutdown). Used by auto-cleanup paths where the
  * queue entry is already being removed regardless of delivery success.
  */
-export function sendErrorResponse(pi: ExtensionAPI, state: ComsState, inbound: InboundContext, error: string): Promise<void> {
+export function sendErrorResponse(pi: ExtensionAPI, state: WireState, inbound: InboundContext, error: string): Promise<void> {
     if (!state.identity) return Promise.resolve();
     const env: ResponseEnvelope = {
         type: "response",
@@ -269,11 +269,11 @@ export function sendErrorResponse(pi: ExtensionAPI, state: ComsState, inbound: I
     // Fire and forget: bounded by sendEnvelope's fixed 5s cap.
     return sendEnvelope(inbound.sender_endpoint, env).then(() => {
         try {
-            pi.appendEntry("coms-log", { event: "outbound_response", msg_id: inbound.msg_id, error });
+            pi.appendEntry("wire-log", { event: "outbound_response", msg_id: inbound.msg_id, error });
         } catch { /* best-effort */ }
     }).catch((e: any) => {
         try {
-            pi.appendEntry("coms-log", {
+            pi.appendEntry("wire-log", {
                 event: "outbound_response_failed",
                 msg_id: inbound.msg_id,
                 reason: e?.message ?? String(e),
@@ -284,13 +284,13 @@ export function sendErrorResponse(pi: ExtensionAPI, state: ComsState, inbound: I
 
 /**
  * Dispatch a peer's answer. Awaits ONLY the transport ack (≤5s) — never any
- * requester-side agent work — so coms_respond can truthfully report success.
+ * requester-side agent work — so wire_respond can truthfully report success.
  * On failure the inbound queue entry is RETAINED so the model can retry; on
  * success it is removed. Throws on failure.
  */
-export async function dispatchInboundResponse(pi: ExtensionAPI, state: ComsState, inbound: InboundContext, response: any, error: string | null): Promise<void> {
-    if (!state.identity) throw new Error("coms not initialised");
-    if (inbound.sending) throw new Error("coms_respond: response already being sent for this msg_id");
+export async function dispatchInboundResponse(pi: ExtensionAPI, state: WireState, inbound: InboundContext, response: any, error: string | null): Promise<void> {
+    if (!state.identity) throw new Error("wire not initialised");
+    if (inbound.sending) throw new Error("wire_respond: response already being sent for this msg_id");
 
     const env: ResponseEnvelope = {
         type: "response",
@@ -309,7 +309,7 @@ export async function dispatchInboundResponse(pi: ExtensionAPI, state: ComsState
     // framing newline written on the wire.
     const bytes = Buffer.byteLength(JSON.stringify(env)) + 1;
     if (bytes > LINE_CAP_BYTES) {
-        throw new Error(`coms_respond: response too large (${bytes} > ${LINE_CAP_BYTES} bytes) — send a file path or summary instead`);
+        throw new Error(`wire_respond: response too large (${bytes} > ${LINE_CAP_BYTES} bytes) — send a file path or summary instead`);
     }
 
     inbound.sending = true;
@@ -318,13 +318,13 @@ export async function dispatchInboundResponse(pi: ExtensionAPI, state: ComsState
         state.inboundQueue.delete(inbound.msg_id);
         if (state.currentInbound?.msg_id === inbound.msg_id) state.currentInbound = null;
         try {
-            pi.appendEntry("coms-log", { event: "outbound_response", msg_id: inbound.msg_id, error });
+            pi.appendEntry("wire-log", { event: "outbound_response", msg_id: inbound.msg_id, error });
         } catch { /* best-effort */ }
     }, (e: any) => {
         // Delivery failed: retain the inbound so the model can retry.
         inbound.sending = false;
         try {
-            pi.appendEntry("coms-log", {
+            pi.appendEntry("wire-log", {
                 event: "outbound_response_failed",
                 msg_id: inbound.msg_id,
                 reason: e?.message ?? String(e),
