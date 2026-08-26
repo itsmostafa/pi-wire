@@ -1,4 +1,6 @@
-# wire — pi2pi extension
+# pi-wire — Two way messaging between Pi Agents
+
+![pi-wire](assets/img/pi-wire.png)
 
 Two-way messaging between Pi agents on the same machine. Unix-socket transport.
 One global pool: every agent registers in `~/.pi/wire/agents/<name>.json` and
@@ -12,6 +14,14 @@ From the repo root:
 pi install /path/to/pi-wire/extensions/wire.ts
 ```
 
+Install the `wire.ts` entry point, including the `.ts` suffix. Do not install
+`extensions/wire`; that directory contains helper modules, not another
+extension. If that path was previously installed, remove it with:
+
+```bash
+pi remove /path/to/pi-wire/extensions/wire
+```
+
 Or copy the repo's `.pi/settings.json` pattern — add the extension path to
 `packages` — and run plain `pi` from the repo root.
 
@@ -19,10 +29,10 @@ Or copy the repo's `.pi/settings.json` pattern — add the extension path to
 
 ```bash
 # terminal 1
-cd ~/common-workspace && pi --name alice
+cd ~/path/to/workspace && pi --name alice
 
 # terminal 2
-cd ~/common-workspace && pi --name bob
+cd ~/path/to/another-workspace && pi --name bob
 ```
 
 The extension is installed project-local (`.pi/settings.json`), so plain `pi`
@@ -54,37 +64,3 @@ context-window usage. `/wire [--all]` force-refreshes it (`--all` reveals
 
 Env knobs: `PI_WIRE_DIR`, `PI_WIRE_MAX_HOPS`, `PI_WIRE_PING_INTERVAL_MS`,
 `PI_WIRE_LINE_CAP_BYTES`.
-
-## Long-running tasks & reliability ceiling
-
-`wire` is designed for long-running single-hop work: a `wire_send` waits only
-for the transport ack (never the peer's answer — a 30-minute task holds no
-connection and trips no timeout), replies arrive as queued follow-ups, and
-peer liveness is PID-based, so a busy agent is never pruned mid-task.
-
-Guarantees and known ceilings (deliberate — no durable bookkeeping):
-
-- **Responses are at-most-once per msg_id, in-memory.** The receiver dedups
-  terminal responses by msg_id, so a responder retry after a lost ACK or a
-  racing "interrupted" cleanup can't double-deliver. The dedup cache is
-  bounded (512 entries, FIFO) — the guarantee holds within that window; a
-  duplicate of an evicted msg_id would be delivered again. Nothing survives
-  a hard kill: if the responder crashes or is SIGKILLed after acking
-  the prompt, the requester is never notified. Graceful shutdown
-  (`SIGINT`/`SIGTERM`, `/new`, `/resume`, `/fork`) best-effort notifies every
-  accepted-but-unanswered request ("peer session ended") before teardown.
-  Prompt retries are NOT deduped — each `wire_send` is a fresh msg_id, so a
-  model retry after a failed send creates a new request.
-- **One endpoint per session identity.** `/new`, `/resume`, `/fork`, `/reload`
-  replace the endpoint; late replies targeting the old socket are lost. Keep
-  the requester session alive for the whole task.
-- **No durable multi-hop relay.** If B delegates part of A's request to C and
-  B's run settles before C replies, A is told "interrupted". Long delegated
-  chains don't compose; keep long tasks single-hop.
-- **Payload bound is the transport line cap** (`PI_WIRE_LINE_CAP_BYTES`, default
-  10 MB) — send file paths or summaries for large results, both to stay under
-  the cap and to avoid blowing the peer's model context.
-- **Responses are retried by the model, not the transport.** A failed
-  `wire_respond` delivery throws a tool error (inbound retained, retryable,
-  deduped at the receiver); an auto-cleanup (interrupted run, shutdown) is
-  fire-and-forget.
