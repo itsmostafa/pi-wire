@@ -1,5 +1,5 @@
 /**
- * coms — pure helpers: colors, frontmatter parsing, endpoint paths, identity
+ * wire — pure helpers: colors, frontmatter parsing, endpoint paths, identity
  * resolution from CLI flags and system-prompt frontmatter.
  */
 
@@ -7,7 +7,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { COMS_DIR, FALLBACK_PALETTE } from "./types";
+import { WIRE_DIR, FALLBACK_PALETTE } from "./types";
 
 export function hexFg(hex: string, s: string): string {
     const r = parseInt(hex.slice(1, 3), 16);
@@ -51,9 +51,9 @@ export function parseFrontmatter(raw: string): { name?: string; description?: st
 
 export function makeEndpoint(sessionId: string): string {
     if (process.platform === "win32") {
-        return `\\\\.\\pipe\\pi-coms-${sessionId}`;
+        return `\\\\.\\pipe\\pi-wire-${sessionId}`;
     }
-    return path.join(COMS_DIR, "sockets", `${sessionId}.sock`);
+    return path.join(WIRE_DIR, "sockets", `${sessionId}.sock`);
 }
 
 export function nowIso(): string {

@@ -1,5 +1,5 @@
 /**
- * coms — transport: unix-socket/named-pipe bind, line framing, and
+ * wire — transport: unix-socket/named-pipe bind, line framing, and
  * request/response envelope delivery over one connection per message.
  */
 
@@ -35,7 +35,7 @@ export async function bindEndpoint(
     if (process.platform !== "win32" && fs.existsSync(endpoint)) {
         const verdict = await probeStaleSocket(endpoint);
         if (verdict === "in_use") {
-            throw new Error(`coms: endpoint already in use (${endpoint})`);
+            throw new Error(`wire: endpoint already in use (${endpoint})`);
         }
         try {
             fs.unlinkSync(endpoint);
