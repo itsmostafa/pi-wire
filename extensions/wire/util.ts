@@ -71,7 +71,6 @@ export function abbreviateModel(model: string): string {
 
 interface CliFlags {
     name?: string;
-    purpose?: string;
     color?: string;
     explicit?: boolean;
 }
@@ -81,12 +80,10 @@ export function readCliFlags(pi: ExtensionAPI): CliFlags {
     // pi's CLI parser accepts them; here we just read them back.
     // Agent name comes from pi's built-in --name/-n (read via getSessionName).
     const name = pi.getSessionName();
-    const purpose = pi.getFlag("purpose") as string | undefined;
     const color = pi.getFlag("color") as string | undefined;
     const explicit = pi.getFlag("explicit") as boolean | undefined;
     return {
         name: name && name.length > 0 ? name : undefined,
-        purpose: purpose && purpose.length > 0 ? purpose : undefined,
         color: color && color.length > 0 ? color : undefined,
         explicit: explicit === true,
     };

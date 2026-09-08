@@ -6,7 +6,7 @@
 import type { ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { CustomEditor } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { WireState } from "./types";
+import type { WireState } from "./types";
 import { abbreviateModel, hexFg } from "./util";
 import { peekCachedEntries } from "./registry";
 

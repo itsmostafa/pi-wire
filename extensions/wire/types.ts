@@ -130,4 +130,6 @@ export interface WireState {
     includeExplicit: boolean;
     currentCtx: ExtensionContext | null;
     currentInbound: InboundContext | null;
+    /** Selected agent persona; set only after successful wire startup. */
+    definitionBody: string | null;
 }

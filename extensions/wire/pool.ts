@@ -3,7 +3,7 @@
  */
 
 import * as crypto from "node:crypto";
-import { AgentCard, WireState, PingEnvelope, Pong, RegistryEntry } from "./types";
+import type { AgentCard, PingEnvelope, Pong, RegistryEntry, WireState } from "./types";
 import { nowIso } from "./util";
 import { liveEntries } from "./registry";
 import { sendEnvelope } from "./transport";

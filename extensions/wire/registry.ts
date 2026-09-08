@@ -5,7 +5,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { WIRE_DIR, PING_INTERVAL_MS, RegistryEntry } from "./types";
+import { WIRE_DIR, PING_INTERVAL_MS } from "./types";
+import type { RegistryEntry } from "./types";
 
 export function agentsDir(): string {
     return path.join(WIRE_DIR, "agents");

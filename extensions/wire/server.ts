@@ -85,7 +85,7 @@ function handlePrompt(pi: ExtensionAPI, state: WireState, socket: net.Socket, en
             },
             { deliverAs: "followUp", triggerTurn: true },
         );
-    } catch (err) {
+    } catch {
         // If sendMessage fails, drop the inbound and nack.
         state.inboundQueue.delete(env.msg_id);
         nack(socket, env.msg_id, "internal error");
