@@ -47,7 +47,7 @@ No build, no package.json. Stdlib only (`node:net`, `node:fs`, etc.) — do not 
 - **One registry, one file per agent**: `~/.pi/wire/agents/<name>.json`, written atomically. Registry reads go through the `liveEntries()` cache (refreshed at most every `PI_WIRE_PING_INTERVAL_MS`), not raw fs calls — keep sync fs off hot paths.
 - **Inbound requests must be answered exactly once** via `wire_respond` (or declined).
 - Envelopes hop-relayed with `MAX_HOPS` guard; registry entries are pruned when sockets go stale.
-- Definition launches fail closed before registration/persona activation on validation or configuration errors. All three wire tools must remain active. Legacy launches without `--wire-agent` keep their existing behavior.
+- Definition launches fail closed before registration/persona activation on validation or configuration errors. All three wire tools must remain active. Legacy launches without `--wire-agent` keep their identity fallback order (`--name` > frontmatter > generated) — but not the removed `--purpose` flag, and not Pi below 0.85.1.
 - Project definitions require explicit `project`/`both` scope and `ctx.isProjectTrusted()`. Use Pi's parsers and config roots; `PI_WIRE_DIR` affects transport storage only.
 - Definitions load once per `session_start`; one factory-level `before_agent_start` handler appends the successful body to the current event prompt. No prompt accumulation or module-level definition cache.
 

@@ -149,7 +149,10 @@ does not affect an already-running session until then. A failed reload leaves
 no previous wire registration or persona body. Do not also pass the definition
 via `--append-system-prompt`, which would duplicate its instructions.
 
-Without `--wire-agent`, existing launch and identity fallbacks are unchanged.
+Without `--wire-agent`, the identity fallback order is unchanged (`--name` >
+frontmatter `name` > generated name, and the same for color). Two legacy
+invocations no longer work: `--purpose` is removed, and Pi below 0.85.1 is
+no longer supported.
 
 ## Usage
 
