@@ -1,0 +1,26 @@
+version: '3'
+
+vars:
+  # No package.json to hold the pin — bump it here.
+  OXLINT: oxlint@1.82.0
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  check:
+    desc: Lint and test (deps run in parallel)
+    deps: [lint, test]
+
+  lint:
+    desc: Lint the extension sources and tests (must stay at zero findings)
+    cmds:
+      - npx -y {{.OXLINT}} extensions *.mjs
+
+  test:
+    desc: Run all tests (needs an installed Pi 0.85.1+ for test-agents.mjs)
+    cmds:
+      - node --test
