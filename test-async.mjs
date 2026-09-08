@@ -106,7 +106,7 @@ test("shutdown closes the listener before snapshotting pending requests", () => 
     assert.ok(shutdown.indexOf("server.close()") < shutdown.indexOf("[...state.inboundQueue.values()]"),
         "server must stop accepting prompts before the notification snapshot");
     // In-flight wire_respond dispatches are awaited (bounded ~5s), not raced.
-    assert.match(shutdown, /await Promise\.allSettled\(\[\.\.\.state\.inflightResponses\]\)/);
+    assert.match(shutdown, /await Promise\.allSettled\(state\.inflightResponses\)/);
     // Concurrent shutdown callers share one in-flight cleanup.
     assert.match(source, /if \(!shutdownPromise\) shutdownPromise = doCleanShutdown\(\)/);
 });
@@ -145,6 +145,7 @@ function makeState(overrides = {}) {
         includeExplicit: false,
         currentCtx: null,
         currentInbound: null,
+        definitionBody: null,
         ...overrides,
     };
 }
