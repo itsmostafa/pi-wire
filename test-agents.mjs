@@ -17,6 +17,8 @@ const { parseArgs } = await import("@earendil-works/pi-coding-agent");
 const { configureAgentDefinition, selectAgentDefinition } = await import("./extensions/wire/agents.ts");
 const { default: wireExtension } = await import("./extensions/wire.ts");
 const { NamedEditor, renderPool } = await import("./extensions/wire/widget.ts");
+const { hexFg } = await import("./extensions/wire/util.ts");
+const { parseEnvInt } = await import("./extensions/wire/types.ts");
 const { invalidateEntryCache, liveEntries } = await import("./extensions/wire/registry.ts");
 const { visibleWidth } = await import("@mariozechner/pi-tui");
 
@@ -536,6 +538,17 @@ const rowsOf = (state) => {
     return "abcde".split("").filter((name) => lines.some((line) => line.includes(name + " ".repeat(11))));
 };
 
+test("env ints truncate to whole numbers so window offsets stay integral", () => {
+    process.env.PIW_TEST_INT = "1.9";
+    assert.equal(parseEnvInt("PIW_TEST_INT", 3, 1), 1);
+    process.env.PIW_TEST_INT = "0.5";
+    assert.equal(parseEnvInt("PIW_TEST_INT", 3, 1), 1); // the min clamps it back up
+    process.env.PIW_TEST_INT = "abc";
+    assert.equal(parseEnvInt("PIW_TEST_INT", 3, 1), 3);
+    delete process.env.PIW_TEST_INT;
+    assert.equal(parseEnvInt("PIW_TEST_INT", 3, 1), 3);
+});
+
 test("pool window follows the selection and clamps it to the live peers", () => {
     const state = poolState(5);
     assert.deepEqual(rowsOf(state), ["a", "b", "c"]); // unfocused: top of the list
@@ -583,7 +596,7 @@ async function poolEditor(peers) {
     await cleanWire();
     invalidateEntryCache();
     liveEntries();
-    const ids = { "\u001b[A": "tui.editor.cursorUp", "\u001b[B": "tui.editor.cursorDown", "\u001b": "app.interrupt" };
+    const ids = { "\u001b[A": "tui.editor.cursorUp", "\u001b[B": "tui.editor.cursorDown", "\u001b[D": "tui.editor.cursorLeft", "\u001b": "app.interrupt" };
     const keybindings = { matches: (data, id) => ids[data] === id, getKeys: () => [], getDefinition: () => ({ description: "" }) };
     const tui = { requestRender() {}, terminal: { rows: 40, columns: 80 } };
     const state = { ...poolState(peers), currentCtx: null };
@@ -592,7 +605,44 @@ async function poolEditor(peers) {
     return { editor, state };
 }
 
-const DOWN = "\u001b[B", UP = "\u001b[A", ESC = "\u001b";
+const DOWN = "\u001b[B", UP = "\u001b[A", LEFT = "\u001b[D", ESC = "\u001b";
+
+test("named editor uses the identity color for both borders and its name", () => {
+    const color = "#C792EA";
+    const label = hexFg(color, " orchestrator ");
+    const state = { ...poolState(0), identity: { color }, currentCtx: null };
+    const tui = { requestRender() {}, terminal: { rows: 40, columns: 80 } };
+    const keybindings = { matches: () => false };
+    const hostBorder = (text) => `[host]${text}[/host]`;
+    const editor = new NamedEditor(tui, { borderColor: hostBorder, selectList: {} }, keybindings, label, state);
+    editor.setText("prompt text");
+    editor.borderColor = hostBorder;
+
+    const lines = editor.render(80);
+    const top = lines[0];
+    const bottom = lines.at(-1);
+    const identityStart = "\u001b[38;2;199;146;234m";
+    assert.ok(top.startsWith(identityStart + "─".repeat(80 - visibleWidth(label))));
+    assert.ok(top.endsWith(label));
+    assert.equal(bottom, hexFg(color, "─".repeat(80)));
+    assert.ok(!top.includes("[host]"));
+    assert.ok(!bottom.includes("[host]"));
+    assert.ok(!lines.slice(1, -1).join("\n").includes("38;2;199;146;234"));
+});
+
+test("down from mid-line first moves the cursor to the prompt end, then hands off", async () => {
+    const { editor, state } = await poolEditor(3);
+    editor.setText("abc");
+    editor.handleInput(LEFT);
+    editor.handleInput(LEFT); // cursor mid-line, not at the prompt end
+
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, null); // pi jumps to line end — not inert, no handoff
+    assert.deepEqual(editor.getCursor(), { line: 0, col: 3 });
+
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 0); // now it is inert, so the list takes over
+});
 
 test("down enters the peer list only when it is inert in the editor", async () => {
     const { editor, state } = await poolEditor(3);
