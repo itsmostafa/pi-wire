@@ -17,6 +17,7 @@ const { parseArgs } = await import("@earendil-works/pi-coding-agent");
 const { configureAgentDefinition, selectAgentDefinition } = await import("./extensions/wire/agents.ts");
 const { default: wireExtension } = await import("./extensions/wire.ts");
 const { NamedEditor, renderPool } = await import("./extensions/wire/widget.ts");
+const { hexFg } = await import("./extensions/wire/util.ts");
 const { invalidateEntryCache, liveEntries } = await import("./extensions/wire/registry.ts");
 const { visibleWidth } = await import("@mariozechner/pi-tui");
 
@@ -593,6 +594,29 @@ async function poolEditor(peers) {
 }
 
 const DOWN = "\u001b[B", UP = "\u001b[A", ESC = "\u001b";
+
+test("named editor uses the identity color for both borders and its name", () => {
+    const color = "#C792EA";
+    const label = hexFg(color, " orchestrator ");
+    const state = { ...poolState(0), identity: { color }, currentCtx: null };
+    const tui = { requestRender() {}, terminal: { rows: 40, columns: 80 } };
+    const keybindings = { matches: () => false };
+    const hostBorder = (text) => `[host]${text}[/host]`;
+    const editor = new NamedEditor(tui, { borderColor: hostBorder, selectList: {} }, keybindings, label, state);
+    editor.setText("prompt text");
+    editor.borderColor = hostBorder;
+
+    const lines = editor.render(80);
+    const top = lines[0];
+    const bottom = lines.at(-1);
+    const identityStart = "\u001b[38;2;199;146;234m";
+    assert.ok(top.startsWith(identityStart + "─".repeat(80 - visibleWidth(label))));
+    assert.ok(top.endsWith(label));
+    assert.equal(bottom, hexFg(color, "─".repeat(80)));
+    assert.ok(!top.includes("[host]"));
+    assert.ok(!bottom.includes("[host]"));
+    assert.ok(!lines.slice(1, -1).join("\n").includes("38;2;199;146;234"));
+});
 
 test("down enters the peer list only when it is inert in the editor", async () => {
     const { editor, state } = await poolEditor(3);

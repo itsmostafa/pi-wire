@@ -32,6 +32,9 @@ export class NamedEditor extends CustomEditor {
     }
 
     render(width: number): string[] {
+        // Pi resets borderColor on model/thinking changes; keep our identity color.
+        const color = this.wire.identity?.color;
+        if (color) this.borderColor = (text: string) => hexFg(color, text);
         const lines = super.render(width);
         if (this.labelWidth > 0 && lines.length > 0 && this.labelWidth < width) {
             // First line is the full-width top border; carve out space at the right.
