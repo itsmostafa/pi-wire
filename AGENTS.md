@@ -18,7 +18,7 @@ the same machine via Unix sockets. Multi-file TypeScript extension (entry +
   - `registry.ts` — `~/.pi/wire/agents/` I/O + throttled live-entry cache
   - `transport.ts` — socket bind, line framing, envelope send
   - `server.ts` — inbound connection handlers, respond dispatch
-  - `widget.ts` — `NamedEditor` + live pool widget
+  - `widget.ts` — `NamedEditor` + live pool widget. The editor owns the pool list's keyboard: pi routes keys to the focused editor and never to widgets, so wire installs its editor on every UI session. Pi's `setEditorComponent` replaces rather than composes — an extension loaded alongside wire that also installs an editor will lose it.
   - `pool.ts` — ping cycle, peer discovery, target resolution
   - `tools.ts` — `wire_list` / `wire_send` / `wire_respond`
 - `test-async.mjs` — stdlib-only tests; asserts the async send/respond contract stays async across all extension sources.
@@ -54,7 +54,7 @@ No build, no package.json. Stdlib only (`node:net`, `node:fs`, etc.) — do not 
 ## Conventions
 
 - New code goes into the `extensions/wire/` module that owns the concern; `extensions/wire.ts` stays the thin composition root. Shared mutable state lives in the single `WireState` object created in the entry and passed by reference — no module-level mutable state except the registry cache and the refresh guard.
-- Env knobs: `PI_WIRE_DIR`, `PI_WIRE_MAX_HOPS`, `PI_WIRE_PING_INTERVAL_MS`, `PI_WIRE_LINE_CAP_BYTES`. Transport timeouts are fixed, not configurable: 5s send cap (transport.ts `sendEnvelope`), 30s idle-socket cap (server.ts `connHandler`).
+- Env knobs: `PI_WIRE_DIR`, `PI_WIRE_MAX_HOPS`, `PI_WIRE_PING_INTERVAL_MS`, `PI_WIRE_LINE_CAP_BYTES`, `PI_WIRE_POOL_ROWS`. Transport timeouts are fixed, not configurable: 5s send cap (transport.ts `sendEnvelope`), 30s idle-socket cap (server.ts `connHandler`).
 - Non-trivial logic changes require the test in `test-async.mjs` to still pass; extend it when touching the async contract.
 - Lint is oxlint on its default (correctness) rules, no config file. Version is pinned in `Taskfile.yml` since there is no package.json to hold it. Fix findings rather than suppressing them; add a config only when a default rule genuinely misfires here.
 - Commit before refactors — the async rewrite sat uncommitted, which made the split's diff hard to review.

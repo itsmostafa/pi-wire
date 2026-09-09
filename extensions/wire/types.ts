@@ -21,6 +21,8 @@ export const MAX_HOPS = parseEnvInt("PI_WIRE_MAX_HOPS", 5, 1);
 export const PING_INTERVAL_MS = parseEnvInt("PI_WIRE_PING_INTERVAL_MS", 2_000, 100);
 export const KEEPALIVE_INTERVAL_MS = 30_000;
 export const LINE_CAP_BYTES = parseEnvInt("PI_WIRE_LINE_CAP_BYTES", 10 * 1024 * 1024, 1024);
+/** Peer rows the pool widget shows at once; the rest are reachable by scrolling. */
+export const POOL_MAX_ROWS = parseEnvInt("PI_WIRE_POOL_ROWS", 3, 1);
 
 export const FALLBACK_PALETTE = [
     "#72F1B8", "#36F9F6", "#FF7EDB", "#FEDE5D",
@@ -128,6 +130,9 @@ export interface WireState {
     /** In-flight wire_respond dispatches, awaited before teardown completes. */
     inflightResponses: Set<Promise<void>>;
     includeExplicit: boolean;
+    /** Selected peer row in the pool widget, or null when the editor has focus.
+     *  Clamped on every render — peers come and go under the selection. */
+    poolSelected: number | null;
     currentCtx: ExtensionContext | null;
     currentInbound: InboundContext | null;
     /** Selected agent persona; set only after successful wire startup. */

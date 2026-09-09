@@ -96,6 +96,7 @@ export default function (pi: ExtensionAPI) {
         shuttingDown: false,
         inflightResponses: new Set(),
         includeExplicit: false,
+        poolSelected: null,
         currentCtx: null,
         currentInbound: null,
         definitionBody: null,
@@ -280,11 +281,13 @@ export default function (pi: ExtensionAPI) {
         try {
             ctx.ui.setStatus("wire", name);
             installPoolWidget(state, ctx);
-            if (ctx.hasUI && (flags.name || definition?.name || fm.name)) {
-                // Only label the editor when the agent was deliberately named;
-                // auto-generated agent-XXXXX names stay off the input border.
+            if (ctx.hasUI) {
+                // Always ours: NamedEditor also carries the pool list's keyboard,
+                // and widgets never receive input. Only the border label is
+                // conditional — auto-generated agent-XXXXX names stay off it.
+                const label = (flags.name || definition?.name || fm.name) ? hexFg(color, ` ${name} `) : "";
                 ctx.ui.setEditorComponent((tui, theme, keybindings) =>
-                    new NamedEditor(tui, theme, keybindings, hexFg(color, ` ${name} `)));
+                    new NamedEditor(tui, theme, keybindings, label, state));
             }
             ctx.ui.notify(`📡 ready · ${name}`, "info");
         } catch {
@@ -406,6 +409,7 @@ export default function (pi: ExtensionAPI) {
             }
         }
         state.identity = null;
+        state.poolSelected = null;
         if (state.currentCtx?.hasUI) {
             try { state.currentCtx.ui.setWidget("wire-pool", undefined); } catch { /* ignore */ }
         }

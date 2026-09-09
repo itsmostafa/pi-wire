@@ -16,6 +16,9 @@ register(new URL("./wire-test-resolve-hook.mjs", import.meta.url));
 const { parseArgs } = await import("@earendil-works/pi-coding-agent");
 const { configureAgentDefinition, selectAgentDefinition } = await import("./extensions/wire/agents.ts");
 const { default: wireExtension } = await import("./extensions/wire.ts");
+const { NamedEditor, renderPool } = await import("./extensions/wire/widget.ts");
+const { invalidateEntryCache, liveEntries } = await import("./extensions/wire/registry.ts");
+const { visibleWidth } = await import("@mariozechner/pi-tui");
 
 test.after(async () => { await rm(wireRoot, { recursive: true, force: true }); });
 
@@ -45,7 +48,7 @@ async function withFixture(run) {
 function piMock(options = {}) {
     const flags = { ...options.flags };
     const hooks = new Map();
-    const calls = { active: [...(options.active ?? ["wire_list", "wire_send", "wire_respond"])], setModel: 0, setTools: 0, entries: [], notices: [], tools: new Map(), messages: [] };
+    const calls = { active: [...(options.active ?? ["wire_list", "wire_send", "wire_respond"])], setModel: 0, setTools: 0, entries: [], notices: [], tools: new Map(), shortcuts: new Map(), messages: [] };
     const ctx = {
         cwd: options.cwd ?? process.cwd(),
         hasUI: options.hasUI ?? true,
@@ -70,7 +73,7 @@ function piMock(options = {}) {
             handlers.push(handler);
             hooks.set(event, handlers);
         },
-        registerMessageRenderer: () => {}, registerTool: (tool) => calls.tools.set(tool.name, tool), registerCommand: () => {},
+        registerMessageRenderer: () => {}, registerTool: (tool) => calls.tools.set(tool.name, tool), registerCommand: () => {}, registerShortcut: (key, option) => calls.shortcuts.set(key, option),
         sendMessage: (message, delivery) => calls.messages.push({ message, delivery }),
         appendEntry: (type, data) => calls.entries.push({ type, data }),
         getAllTools: () => (options.available ?? ["read", "grep", "wire_list", "wire_send", "wire_respond"]).map((name) => ({ name })),
@@ -512,3 +515,152 @@ test("definition peers discover and exchange requests/replies through unchanged 
         } finally { Date.now = now; }
     } finally { await shutdown(sender); await shutdown(receiver); }
 }));
+
+// ━━ Pool widget selection ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const plainTheme = { fg: (_role, text) => text, bg: (_role, text) => `[${text}]` };
+
+function poolState(count, poolSelected = null) {
+    const peerCards = new Map();
+    for (let i = 0; i < count; i++) {
+        const name = String.fromCharCode(97 + i);
+        peerCards.set(`session-${name}`, { name, purpose: "", model: "m", color: "#ffffff", context_used_pct: 10, staleCount: 0 });
+    }
+    return { identity: null, includeExplicit: false, poolSelected, peerCards };
+}
+
+// Registry entries are passed explicitly so the shared cache can't leak rows in.
+// Names are padEnd(12) in the row, which no other column can produce.
+const rowsOf = (state) => {
+    const lines = renderPool(state, 120, plainTheme, []);
+    return "abcde".split("").filter((name) => lines.some((line) => line.includes(name + " ".repeat(11))));
+};
+
+test("pool window follows the selection and clamps it to the live peers", () => {
+    const state = poolState(5);
+    assert.deepEqual(rowsOf(state), ["a", "b", "c"]); // unfocused: top of the list
+
+    state.poolSelected = 0;
+    assert.deepEqual(rowsOf(state), ["a", "b", "c"]);
+
+    state.poolSelected = 3;
+    assert.deepEqual(rowsOf(state), ["c", "d", "e"]);
+
+    // Past the last peer: clamped, and written back so the next key press moves.
+    state.poolSelected = 99;
+    assert.deepEqual(rowsOf(state), ["c", "d", "e"]);
+    assert.equal(state.poolSelected, 4);
+
+    // No peers means no selection to return to.
+    const empty = poolState(0, 2);
+    assert.equal(renderPool(empty, 120, plainTheme, []).length, 0);
+    assert.equal(empty.poolSelected, null);
+});
+
+test("pool widget keeps a fixed height, highlights one row, and hints the keys", () => {
+    const browsing = renderPool(poolState(5, 3), 120, plainTheme, []);
+    assert.equal(browsing.length, 5); // 3 rows + 2 rules
+    assert.equal(browsing.filter((line) => line.startsWith("[")).length, 1); // one highlighted row
+    assert.ok(browsing.find((line) => line.startsWith("[")).includes("d" + " ".repeat(11)));
+    assert.match(browsing.at(-1), /4 of 5 · ↑↓ move · esc back/);
+
+    const idle = renderPool(poolState(5), 120, plainTheme, []);
+    assert.equal(idle.filter((line) => line.startsWith("[")).length, 0);
+    assert.match(idle.at(-1), /1–3 of 5 · ↓ to browse/);
+
+    const fitting = renderPool(poolState(2), 120, plainTheme, []);
+    assert.equal(fitting.length, 4);
+    assert.equal(fitting.at(-1), fitting[0]); // plain rule, no hint
+});
+
+// ━━ Pool list keyboard (lives in the editor: widgets never receive input) ━━
+
+// poolRows falls back to the process-wide registry cache, which the lifecycle
+// tests populate — empty it so only the peers this fixture declares show up.
+// Invalidating beats skipping the clock forward: a faked future timestamp would
+// stick in the cache and starve later tests of refreshes for that long.
+async function poolEditor(peers) {
+    await cleanWire();
+    invalidateEntryCache();
+    liveEntries();
+    const ids = { "\u001b[A": "tui.editor.cursorUp", "\u001b[B": "tui.editor.cursorDown", "\u001b": "app.interrupt" };
+    const keybindings = { matches: (data, id) => ids[data] === id, getKeys: () => [], getDefinition: () => ({ description: "" }) };
+    const tui = { requestRender() {}, terminal: { rows: 40, columns: 80 } };
+    const state = { ...poolState(peers), currentCtx: null };
+    const editor = new NamedEditor(tui, { borderColor: (t) => t, selectList: {} }, keybindings, "", state);
+    editor.render(80); // establishes the width the visual-line map needs
+    return { editor, state };
+}
+
+const DOWN = "\u001b[B", UP = "\u001b[A", ESC = "\u001b";
+
+test("down enters the peer list only when it is inert in the editor", async () => {
+    const { editor, state } = await poolEditor(3);
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 0);
+
+    editor.handleInput(DOWN);
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 2);
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 2); // clamped at the last peer
+
+    editor.handleInput(UP);
+    assert.equal(state.poolSelected, 1);
+    editor.handleInput(UP);
+    editor.handleInput(UP);
+    assert.equal(state.poolSelected, null); // up off the top row returns to the editor
+
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 0);
+    editor.handleInput(ESC);
+    assert.equal(state.poolSelected, null);
+
+    // Typing while browsing resumes the editor and keeps the keystroke.
+    editor.handleInput(DOWN);
+    editor.handleInput("x");
+    assert.equal(state.poolSelected, null);
+    assert.equal(editor.getText(), "x");
+
+    // Down mid-prompt still moves the cursor rather than stealing focus.
+    editor.setText("one\ntwo");
+    editor.render(80);
+    editor.handleInput(UP);
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, null);
+});
+
+test("down stays in the editor when there are no peers to browse", async () => {
+    const { editor, state } = await poolEditor(0);
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, null);
+});
+
+test("browsing yields to abort and to a late autocomplete instead of eating keys", async () => {
+    const { editor, state } = await poolEditor(3);
+
+    // Escape must still reach pi's interrupt, not just close the list.
+    let aborted = 0;
+    editor.onEscape = () => { aborted++; };
+    editor.handleInput(DOWN);
+    editor.handleInput(ESC);
+    assert.equal(state.poolSelected, null);
+    assert.equal(aborted, 1);
+
+    // An autocomplete request in flight applies when text and cursor are
+    // unchanged — the very state that let the list take focus. The menu wins.
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 0);
+    editor.isShowingAutocomplete = () => true;
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, null);
+});
+
+test("pool rows never outgrow a narrow terminal", () => {
+    // Real theme colors are zero-width ANSI; plainTheme's "[]" markers are not.
+    const ansiTheme = { fg: (_r, t) => t, bg: (_r, t) => `\u001b[7m${t}\u001b[27m` };
+    for (const width of [10, 20, 40]) {
+        const lines = renderPool(poolState(5, 3), width, ansiTheme, []);
+        for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}: ${JSON.stringify(line)}`);
+    }
+});
