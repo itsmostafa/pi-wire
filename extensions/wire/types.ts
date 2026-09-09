@@ -8,11 +8,13 @@ import * as os from "node:os";
 
 // ━━ Constants ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function parseEnvInt(name: string, fallback: number, min?: number): number {
+export function parseEnvInt(name: string, fallback: number, min?: number): number {
     const raw = process.env[name];
     if (raw === undefined || raw.trim() === "") return fallback;
-    const val = Number(raw);
-    if (!Number.isFinite(val) || Number.isNaN(val)) return fallback;
+    // Truncate: every knob here indexes or counts, and a fraction desyncs the
+    // pool window (slice() floors the offset, the selection compare does not).
+    const val = Math.trunc(Number(raw));
+    if (!Number.isFinite(val)) return fallback;
     return min !== undefined ? Math.max(min, val) : val;
 }
 
