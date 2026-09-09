@@ -91,6 +91,12 @@ export function liveEntries(): RegistryEntry[] {
     return cachedEntries;
 }
 
+/** Drop the cache so the next liveEntries() re-reads from disk. Tests need it:
+ *  the cache is process-wide and outlives the registry files they clean up. */
+export function invalidateEntryCache(): void {
+    cachedEntriesAt = 0;
+}
+
 /** Read the cache without ever triggering a refresh — for the render path. */
 export function peekCachedEntries(): RegistryEntry[] {
     return cachedEntries;
