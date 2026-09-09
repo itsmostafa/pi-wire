@@ -165,8 +165,15 @@ A live pool widget under the editor shows peers, their models, and
 context-window usage. `/wire [--all]` force-refreshes it (`--all` reveals
 `--explicit` agents).
 
+The widget shows three peers at a time so a crowded pool cannot swallow the
+terminal. Press down at the end of the prompt — past the end of prompt history —
+to move into the list: the selected peer is highlighted, up and down move
+between peers and scroll the window, and escape (or up past the first peer)
+returns to the prompt. Set `PI_WIRE_POOL_ROWS` to show a different number
+of rows.
+
 Env knobs: `PI_WIRE_DIR`, `PI_WIRE_MAX_HOPS`, `PI_WIRE_PING_INTERVAL_MS`,
-`PI_WIRE_LINE_CAP_BYTES`.
+`PI_WIRE_LINE_CAP_BYTES`, `PI_WIRE_POOL_ROWS`.
 
 ## Tests
 
