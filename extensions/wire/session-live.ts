@@ -127,23 +127,51 @@ function toolMessage(tool: LiveToolState): AnyRecord {
     };
 }
 
-function relink(entries: AnyRecord[]): AnyRecord[] {
-    let parentId: string | null = null;
-    return entries.map((entry) => {
-        const linked = { ...entry, parentId };
-        parentId = linked.id;
-        return linked;
-    });
+interface CachedEntry {
+    parentId: string | null;
+    entry: AnyRecord;
+    part: string;
+    cost: number;
 }
 
-function branch(state: WireState): AnyRecord[] {
+// Persisted entries are immutable once written and pi hands back the same objects
+// on every getBranch(), so a poll only pays for what changed. Keyed on the raw
+// entry, with the linked parent recorded: a branch switch or compaction gives a
+// different predecessor and misses, so the cache needs no explicit invalidation.
+const entryCache = new WeakMap<object, CachedEntry>();
+
+interface Branch {
+    entries: AnyRecord[];
+    parts: string[];
+    costs: number[];
+}
+
+function branch(state: WireState): Branch {
     const source = state.currentCtx?.sessionManager?.getBranch?.() ?? [];
-    const out: AnyRecord[] = [];
+    const out: Branch = { entries: [], parts: [], costs: [] };
+    let parentId: string | null = null;
     for (const raw of source as SessionEntry[]) {
-        const entry = safeEntry(raw as unknown as AnyRecord, state);
-        if (entry) out.push(entry);
+        if (!raw || typeof raw !== "object") continue;
+        const cached = entryCache.get(raw);
+        if (cached && cached.parentId === parentId) {
+            out.entries.push(cached.entry);
+            out.parts.push(cached.part);
+            out.costs.push(cached.cost);
+            parentId = cached.entry.id as string;
+            continue;
+        }
+        const safe = safeEntry(raw as unknown as AnyRecord, state);
+        if (!safe) continue;
+        const entry = { ...safe, parentId };
+        const part = JSON.stringify(entry);
+        const cost = outerPartBytes(part);
+        entryCache.set(raw, { parentId, entry, part, cost });
+        out.entries.push(entry);
+        out.parts.push(part);
+        out.costs.push(cost);
+        parentId = entry.id as string;
     }
-    return relink(out);
+    return out;
 }
 
 function sameMessage(left: AnyRecord, right: AnyRecord): boolean {
@@ -239,10 +267,12 @@ function truncationNotice(parentId: string | null, dropped: number): AnyRecord {
 
 function boundedSource(state: WireState, msg_id: string, status: "running" | "idle"): string {
     const base = branch(state);
-    const all = [...base, ...liveEntries(state, base)];
+    const live = liveEntries(state, base.entries);
+    const liveParts = live.map((entry) => JSON.stringify(entry));
+    const all = [...base.entries, ...live];
     const headerPart = JSON.stringify(header(state));
-    const parts = all.map((entry) => JSON.stringify(entry));
-    const costs = parts.map(outerPartBytes);
+    const parts = [...base.parts, ...liveParts];
+    const costs = [...base.costs, ...liveParts.map(outerPartBytes)];
     const suffix = Array.from({ length: costs.length + 1 }, () => 0);
     for (let i = costs.length - 1; i >= 0; i--) suffix[i] = suffix[i + 1] + costs[i];
     const baseBytes = lineBytes(msg_id, status, [headerPart]);
@@ -256,10 +286,16 @@ function boundedSource(state: WireState, msg_id: string, status: "running" | "id
         if (baseBytes + suffix[i] + noticeBytes <= LINE_CAP_BYTES) start = i;
         else break;
     }
-    const kept = all.slice(start);
+    // Only the notice and the entry it adopts change; the rest of the kept
+    // suffix is already chained, so reuse the parts serialized above.
     const notice = truncationNotice(null, start);
-    const finalEntries = relink([notice, ...kept]);
-    const finalParts = [headerPart, ...finalEntries.map((entry) => JSON.stringify(entry))];
+    const head = start < all.length ? { ...all[start], parentId: notice.id as string } : null;
+    const finalParts = [
+        headerPart,
+        JSON.stringify(notice),
+        ...(head ? [JSON.stringify(head)] : []),
+        ...parts.slice(start + 1),
+    ];
     const source = sourceFromParts(finalParts);
     return Buffer.byteLength(snapshotLine(msg_id, source, status)) + 1 <= LINE_CAP_BYTES
         ? source

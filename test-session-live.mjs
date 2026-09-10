@@ -162,3 +162,31 @@ test("snapshots are bounded with an explicit notice and shutdown refuses request
         await assert.rejects(snapshot(endpoint), /shutting down/);
     });
 });
+
+test("the entry cache reuses unchanged entries and re-chains a switched branch", async () => {
+    const peer = makePeer();
+    let parent = "u";
+    for (let i = 0; i < 5; i++) {
+        const id = `e${i}`;
+        peer.branch.push(entry(id, parent, { role: "user", content: `entry ${i}` }));
+        parent = id;
+    }
+    await withServer(peer.state, async (endpoint) => {
+        // Same entry objects twice: the cached parts must reproduce the line exactly.
+        const first = await snapshot(endpoint);
+        const second = await snapshot(endpoint);
+        assert.equal(second.source, first.source);
+
+        // Same objects, different predecessor: a cache keyed on the entry alone
+        // would replay the stale parentId chain instead of the new one.
+        const [, ...rest] = peer.branch;
+        peer.branch.length = 0;
+        peer.branch.push(entry("u", null, { role: "user", content: "start" }), ...rest.slice().reverse());
+        const switched = parseSessionEntries((await snapshot(endpoint)).source).slice(1);
+        assert.deepEqual(switched.map((item) => item.id), ["u", "e4", "e3", "e2", "e1", "e0"]);
+        assert.deepEqual(
+            switched.map((item) => item.parentId),
+            switched.map((_item, i) => i === 0 ? null : switched[i - 1].id),
+        );
+    });
+});
