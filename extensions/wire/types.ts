@@ -36,7 +36,7 @@ export const SEEN_RESPONSE_IDS_CAP = 512;
 
 // ━━ Types ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-export type EnvelopeType = "prompt" | "response" | "ping";
+export type EnvelopeType = "prompt" | "response" | "ping" | "session_snapshot";
 
 export interface Envelope {
     type: EnvelopeType;
@@ -65,12 +65,18 @@ export interface PingEnvelope extends Envelope {
     type: "ping";
 }
 
+export interface SessionSnapshotEnvelope extends Envelope {
+    type: "session_snapshot";
+}
+
 export interface AgentCard {
     name: string;
     purpose: string;
     model: string;
     color: string;
     context_used_pct: number;
+    /** Session file path, absent for ephemeral sessions and older peers. */
+    session_file?: string;
 }
 
 export interface Pong {
@@ -88,6 +94,8 @@ export interface RegistryEntry {
     pid: number;
     endpoint: string;
     cwd: string;
+    /** Session file path, absent for ephemeral sessions and older peers. */
+    session_file?: string;
     started_at: string;
     explicit: boolean;
     version: number;
@@ -120,6 +128,14 @@ export interface Identity {
  * Mutable state shared across all modules for one extension instance.
  * Created once in wire.ts (the composition root) and passed by reference.
  */
+export interface LiveToolState {
+    toolCallId: string;
+    toolName: string;
+    partialResult?: unknown;
+    result?: unknown;
+    ended: boolean;
+}
+
 export interface WireState {
     identity: Identity | null;
     peerCards: Map<string, AgentCard & { staleCount: number }>;
@@ -139,4 +155,12 @@ export interface WireState {
     currentInbound: InboundContext | null;
     /** Selected agent persona; set only after successful wire startup. */
     definitionBody: string | null;
+    /** Closes the active peer session viewer, if one is open. */
+    closeSessionViewer?: () => void;
+    /** Latest in-memory assistant message while it is streaming/finalizing. */
+    liveAssistantMessage?: unknown;
+    /** In-memory tool previews keyed by tool call id. */
+    liveTools: Map<string, LiveToolState>;
+    /** Whether the current agent run is active for snapshot status. */
+    liveStatus: "running" | "idle";
 }

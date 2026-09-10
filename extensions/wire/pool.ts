@@ -9,6 +9,13 @@ import { liveEntries } from "./registry";
 import { sendEnvelope } from "./transport";
 import { installPoolWidget } from "./widget";
 
+function sanitizeAgentCard(card: AgentCard): AgentCard {
+    if (card.session_file === undefined || typeof card.session_file === "string") return card;
+    const sanitized = { ...card };
+    delete sanitized.session_file;
+    return sanitized;
+}
+
 export async function pingPeer(state: WireState, endpoint: string): Promise<AgentCard | null> {
     if (!state.identity) return null;
     const env: PingEnvelope = {
@@ -22,7 +29,7 @@ export async function pingPeer(state: WireState, endpoint: string): Promise<Agen
     try {
         const resp = await sendEnvelope(endpoint, env);
         if (resp && resp.type === "pong" && resp.agent_card) {
-            return resp.agent_card as AgentCard;
+            return sanitizeAgentCard(resp.agent_card as AgentCard);
         }
     } catch {
         // ignore — peer unreachable
@@ -62,10 +69,10 @@ export async function refreshPool(state: WireState): Promise<void> {
                 const { peer, pong } = r.value;
                 seenSessions.add(peer.session_id);
                 const prev = state.peerCards.get(peer.session_id);
-                const next = { ...pong.agent_card, staleCount: 0 };
+                const next = { ...sanitizeAgentCard(pong.agent_card), staleCount: 0 };
                 // Field-wise compare — cheaper than JSON.stringify and order-insensitive.
                 const differs = !prev
-                    || (["name", "purpose", "model", "color", "context_used_pct"] as const)
+                    || (["name", "purpose", "model", "color", "context_used_pct", "session_file"] as const)
                         .some((k) => prev[k] !== next[k]);
                 if (differs) {
                     state.peerCards.set(peer.session_id, next);

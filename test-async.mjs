@@ -17,6 +17,7 @@ function collectTs(dir, out = []) {
     }
     return out;
 }
+const entrySource = readFileSync(new URL("./extensions/wire.ts", import.meta.url), "utf8");
 const source = collectTs(new URL("./extensions", import.meta.url).pathname)
     .map((f) => readFileSync(f, "utf8"))
     .join("\n");
@@ -74,11 +75,11 @@ test("auto-cleanup runs at agent_settled, not agent_end", () => {
     // agent_end can precede retry/compaction/queued follow-up continuations —
     // cleaning up there would prematurely finalize requests Pi is still on.
     assert.ok(!source.includes('pi.on("agent_end"'));
-    assert.match(source, /pi\.on\("agent_settled"[\s\S]*interrupted/);
+    assert.match(entrySource, /pi\.on\("agent_settled"[\s\S]*interrupted/);
 });
 
 test("graceful shutdown notifies every accepted-but-unanswered inbound request", () => {
-    const shutdown = source.slice(source.indexOf("async function doCleanShutdown"), source.indexOf('pi.on("session_shutdown"'));
+    const shutdown = entrySource.slice(entrySource.indexOf("async function doCleanShutdown"), entrySource.indexOf('pi.on("session_shutdown"'));
     assert.match(shutdown, /sendErrorResponse[\s\S]*"peer session ended"/);
 });
 
@@ -102,7 +103,7 @@ test("terminal responses are deduplicated by msg_id (lost-ACK ambiguity guard)",
 });
 
 test("shutdown closes the listener before snapshotting pending requests", () => {
-    const shutdown = source.slice(source.indexOf("async function doCleanShutdown"));
+    const shutdown = entrySource.slice(entrySource.indexOf("async function doCleanShutdown"));
     assert.ok(shutdown.indexOf("server.close()") < shutdown.indexOf("[...state.inboundQueue.values()]"),
         "server must stop accepting prompts before the notification snapshot");
     // In-flight wire_respond dispatches are awaited (bounded ~5s), not raced.
