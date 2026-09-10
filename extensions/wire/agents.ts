@@ -207,7 +207,8 @@ export async function configureAgentDefinition(
         // Unlike setModel the host returns nothing and clamps to model capability
         // (non-reasoning models force "off"), so the readback is the only signal.
         // Only a definition level fails closed; the CLI's own is Pi's to clamp.
-        if (effort === definition.effort && pi.getThinkingLevel() !== effort) {
+        // That is a question of source, not value: the two can be equal.
+        if (cli.thinking === undefined && pi.getThinkingLevel() !== effort) {
             throw new Error(`could not apply effort "${definition.effort}"`);
         }
     }

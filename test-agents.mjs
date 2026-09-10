@@ -266,11 +266,14 @@ test("effort is asserted after the model switch, survives as --thinking, and yie
     assert.equal(cliModel.calls.setThinking, 0);
     assert.equal(cliModel.pi.getThinkingLevel(), "xhigh");
 
-    // A clamped CLI level is Pi's business, not a wire startup failure.
-    // (The definition's own level failing closed is covered at lifecycle level.)
-    const clampedFlag = piMock({ clampEffort: "off" });
-    await configureAgentDefinition(clampedFlag.pi, clampedFlag.ctx, { ...definition, effort: undefined }, { thinking: "xhigh" });
-    assert.equal(clampedFlag.pi.getThinkingLevel(), "off");
+    // A clamped CLI level is Pi's business, not a wire startup failure — including
+    // when it happens to equal the definition's, which is a source question, not
+    // a value comparison. (Definition fail-closed is covered at lifecycle level.)
+    for (const effort of [undefined, "xhigh"]) {
+        const clampedFlag = piMock({ clampEffort: "off" });
+        await configureAgentDefinition(clampedFlag.pi, clampedFlag.ctx, { ...definition, effort }, { thinking: "xhigh" });
+        assert.equal(clampedFlag.pi.getThinkingLevel(), "off");
+    }
 });
 
 test("explicit CLI tool options skip validation of the discarded definition allowlist", async () => {
