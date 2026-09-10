@@ -7,11 +7,18 @@ import * as path from "node:path";
 
 export type AgentScope = "user" | "project" | "both";
 
+// Pi does not re-export ThinkingLevel or its option list from the package entry,
+// and a deep subpath import would break the test resolve hook. Derive the type
+// from the setter; keep the list in sync with Pi's THINKING_LEVEL_OPTIONS.
+type Effort = Parameters<ExtensionAPI["setThinkingLevel"]>[0];
+const EFFORT_LEVELS: readonly Effort[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
 export interface AgentDefinition {
     name: string;
     description: string;
     tools?: string[];
     model?: string;
+    effort?: Effort;
     color?: string;
     body: string;
     source: "user" | "project";
@@ -23,6 +30,7 @@ type RawFrontmatter = {
     description?: unknown;
     tools?: unknown;
     model?: unknown;
+    effort?: unknown;
     color?: unknown;
 };
 
@@ -80,9 +88,11 @@ function parseCandidate(filePath: string, source: "user" | "project"): Candidate
         const description = stringField(frontmatter.description, "description", filePath);
         const tools = Object.hasOwn(frontmatter, "tools") ? toolsField(frontmatter.tools, filePath) : undefined;
         const model = Object.hasOwn(frontmatter, "model") ? stringField(frontmatter.model, "model", filePath) : undefined;
+        const effort = Object.hasOwn(frontmatter, "effort") ? stringField(frontmatter.effort, "effort", filePath) as Effort : undefined;
+        if (effort !== undefined && !EFFORT_LEVELS.includes(effort)) invalid(filePath, `effort must be one of ${EFFORT_LEVELS.join(", ")}`);
         const color = Object.hasOwn(frontmatter, "color") ? stringField(frontmatter.color, "color", filePath) : undefined;
         if (color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(color)) invalid(filePath, "color must be #RRGGBB");
-        return { source, filePath, name, definition: { name, description, tools, model, color, body, source, filePath } };
+        return { source, filePath, name, definition: { name, description, tools, model, effort, color, body, source, filePath } };
     } catch (error) {
         return { source, filePath, name, error: error instanceof Error ? error.message : String(error) };
     }
@@ -150,7 +160,7 @@ export async function configureAgentDefinition(
     pi: ExtensionAPI,
     ctx: ExtensionContext,
     definition: AgentDefinition,
-    cli: Pick<Args, "model" | "tools" | "excludeTools" | "noTools" | "noBuiltinTools">,
+    cli: Pick<Args, "model" | "thinking" | "tools" | "excludeTools" | "noTools" | "noBuiltinTools">,
 ): Promise<void> {
     const explicitTools = cli.tools !== undefined || cli.excludeTools !== undefined ||
         cli.noTools === true || cli.noBuiltinTools === true;
@@ -186,6 +196,21 @@ export async function configureAgentDefinition(
 
     if (model && cli.model === undefined && await pi.setModel(model) === false) {
         throw new Error(`could not apply model "${definition.model}"`);
+    }
+    // Always after the model: setModel re-derives the level from the target
+    // model's saved default, so asserting it earlier would be undone. An explicit
+    // --model is left alone — Pi resolves a `provider/id:level` suffix through a
+    // matcher wire cannot reach, and that level is the user's, not ours.
+    const effort = cli.model === undefined ? cli.thinking ?? definition.effort : undefined;
+    if (effort) {
+        pi.setThinkingLevel(effort);
+        // Unlike setModel the host returns nothing and clamps to model capability
+        // (non-reasoning models force "off"), so the readback is the only signal.
+        // Only a definition level fails closed; the CLI's own is Pi's to clamp.
+        // That is a question of source, not value: the two can be equal.
+        if (cli.thinking === undefined && pi.getThinkingLevel() !== effort) {
+            throw new Error(`could not apply effort "${definition.effort}"`);
+        }
     }
     if (definition.tools !== undefined && !explicitTools) pi.setActiveTools(activeTools);
     // The host silently ignores unknown tools, and model hooks may change tools.

@@ -65,6 +65,7 @@ name: reviewer
 description: Reviews changes for correctness and security
 tools: read, grep, find, ls
 model: openai-codex/gpt-5.6-sol
+effort: high
 color: "#C792EA"
 ---
 
@@ -110,6 +111,12 @@ malformed unrelated files do not block a valid selection.
 - `model`: exact `provider/model-id`, with configured provider authentication.
   Omitted inherits the current model. Further slashes and colons belong to the
   model ID; bare IDs, fuzzy matching, and thinking suffix parsing are unsupported.
+- `effort`: Pi's thinking level — one of `off`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`, `max`, lowercase and exact. Omitted inherits the session's
+  current level; wire does not touch it. Applied after the model, because a
+  model switch re-derives the level from that model's saved default. A level
+  the active model cannot honor is a startup error, not a silent downgrade:
+  Pi clamps non-reasoning models to `off`.
 - `color`: quoted `#RRGGBB`; omitted uses the fallbacks below.
 - Markdown body: appended once per turn to Pi's normal system prompt, preserving
   context files, skills, and other guidance. An empty body does nothing.
@@ -120,6 +127,7 @@ malformed unrelated files do not block a valid selection.
 | Purpose | definition description → prompt frontmatter `description` → empty |
 | Color | `--color` → definition color → prompt frontmatter → palette |
 | Model | explicit `--model` → definition model → current/default model |
+| Effort | explicit `--thinking` → definition effort → current level (any explicit `--model` leaves the level to Pi) |
 | Tools | explicit CLI tool options → definition tools → current/default tools |
 
 CLI tool options include `--tools`/`-t`, `--no-tools`/`-nt`,
@@ -134,9 +142,9 @@ pi --wire-agent reviewer --tools read,grep,find,ls,wire_list,wire_send,wire_resp
 ```
 
 Selected definitions are validated even when CLI values override their fields.
-Invalid selections, unavailable models/tools, failed model application, or
-missing wire tools report a startup error and skip wire registration and persona
-activation—never silently start an anonymous peer.
+Invalid selections, unavailable models/tools, failed model or effort
+application, or missing wire tools report a startup error and skip wire
+registration and persona activation—never silently start an anonymous peer.
 
 A restored session name or earlier `/name` does not override a selected
 definition. Existing sanitization and collision suffixes still apply: a second

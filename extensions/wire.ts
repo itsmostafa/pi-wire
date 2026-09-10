@@ -168,18 +168,22 @@ export default function (pi: ExtensionAPI) {
                 // which is why the catch below can call it unconditionally.
                 const prevModel = ctx.model;
                 const prevTools = pi.getActiveTools();
+                const prevEffort = pi.getThinkingLevel();
                 unwind = async () => {
                     try {
                         if (prevModel && ctx.model !== prevModel) await pi.setModel(prevModel);
+                        // After the model: restoring it can itself clamp the level.
+                        if (pi.getThinkingLevel() !== prevEffort) pi.setThinkingLevel(prevEffort);
                         // Compare by content: the host may hand back a fresh array.
                         if (pi.getActiveTools().join("\0") !== prevTools.join("\0")) pi.setActiveTools(prevTools);
                     } catch { /* best-effort */ }
                 };
                 await configureAgentDefinition(pi, ctx, definition, cli);
             } catch (error) {
-                // configureAgentDefinition validates before mutating, with one
-                // exception: its final wire-tool check runs after, because the
-                // host drops unknown tools and model hooks may change the set.
+                // configureAgentDefinition validates before mutating, except for
+                // two checks only possible afterwards: a thinking level the host
+                // clamped, and the final wire-tool check, because the host drops
+                // unknown tools and model hooks may change the set.
                 if (unwind) await unwind();
                 reportStartError(ctx, error);
                 return;
