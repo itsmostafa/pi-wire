@@ -15,10 +15,12 @@ import type {
     Pong,
     PromptEnvelope,
     ResponseEnvelope,
+    SessionSnapshotEnvelope,
 } from "./types";
 import { LINE_CAP_BYTES, MAX_HOPS, SEEN_RESPONSE_IDS_CAP } from "./types";
 import { nowIso } from "./util";
 import { sendEnvelope } from "./transport";
+import { handleSessionSnapshot } from "./session-live";
 
 function ackOk(socket: net.Socket, msg_id: string): void {
     try {
@@ -162,12 +164,14 @@ function handlePing(state: WireState, socket: net.Socket, env: PingEnvelope): vo
     const ctx = state.currentCtx;
     const ident = state.identity;
     const pct = ctx ? Math.round(ctx.getContextUsage()?.percent ?? 0) : 0;
+    const sessionFile = ctx?.sessionManager?.getSessionFile?.();
     const card: AgentCard = {
         name: ident?.name ?? "unknown",
         purpose: ident?.purpose ?? "",
         model: ctx?.model?.id ?? ident?.model ?? "unknown",
         color: ident?.color ?? "#36F9F6",
         context_used_pct: pct,
+        ...(typeof sessionFile === "string" ? { session_file: sessionFile } : {}),
     };
     const pong: Pong = { type: "pong", msg_id: env.msg_id, agent_card: card };
     try {
@@ -233,6 +237,8 @@ export function createConnHandler(pi: ExtensionAPI, state: WireState): (socket: 
                     handleResponse(pi, state, socket, parsed as ResponseEnvelope);
                 } else if (parsed.type === "ping") {
                     handlePing(state, socket, parsed as PingEnvelope);
+                } else if (parsed.type === "session_snapshot") {
+                    handleSessionSnapshot(state, socket, parsed as SessionSnapshotEnvelope);
                 } else {
                     nack(socket, parsed.msg_id, "unknown type");
                 }
