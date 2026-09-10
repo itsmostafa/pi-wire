@@ -176,9 +176,21 @@ context-window usage. `/wire [--all]` force-refreshes it (`--all` reveals
 The widget shows three peers at a time so a crowded pool cannot swallow the
 terminal. Press down at the end of the prompt — past the end of prompt history —
 to move into the list: the selected peer is highlighted, up and down move
-between peers and scroll the window, and escape (or up past the first peer)
-returns to the prompt. Set `PI_WIRE_POOL_ROWS` to show a different number
-of rows.
+between peers and scroll the window. Press **Enter** to view the selected
+agent's live session in a read-only overlay in the same TUI. Streaming replies,
+thinking, and tool progress update about every 100 ms while the viewer is open;
+the header shows whether the peer is running or idle. Use ↑/↓ or Page Up/Down
+to scroll, Home/End to jump, and Escape to return with your prompt untouched.
+Scrolling up pauses following until you return to the bottom. Neither agent is
+interrupted or switched.
+
+Escape from the list (or up past the first peer) returns to the prompt.
+Set `PI_WIRE_POOL_ROWS` to show a different number of rows. Reload wire on both
+agents to enable live session viewing, including ephemeral (`--no-session`) peers.
+Older or unreachable peers fall back to their saved session when available
+(32 MiB file limit); the header identifies this fallback. Images appear as
+placeholders. Live snapshots retain the newest 8K characters per text block and
+fit the wire message-size limit, with explicit truncation notices.
 
 Env knobs: `PI_WIRE_DIR`, `PI_WIRE_MAX_HOPS`, `PI_WIRE_PING_INTERVAL_MS`,
 `PI_WIRE_LINE_CAP_BYTES`, `PI_WIRE_POOL_ROWS`.

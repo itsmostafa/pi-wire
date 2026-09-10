@@ -15,6 +15,8 @@
  *   transport.ts socket bind, line framing, envelope send
  *   server.ts    inbound connection handlers, respond dispatch
  *   widget.ts    NamedEditor + live pool widget
+ *   session-live.ts in-memory streaming snapshots
+ *   session-view.ts read-only peer session overlay
  *   pool.ts      ping cycle, peer discovery, target resolution
  *   tools.ts     wire_list / wire_send / wire_respond
  *
@@ -38,6 +40,7 @@ import { createConnHandler, sendErrorResponse } from "./wire/server";
 import { NamedEditor, installPoolWidget } from "./wire/widget";
 import { refreshPool } from "./wire/pool";
 import { registerTools } from "./wire/tools";
+import { registerSessionLive } from "./wire/session-live";
 import { configureAgentDefinition, selectAgentDefinition, type AgentDefinition, type AgentScope } from "./wire/agents";
 
 // ━━ Default export ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -100,7 +103,11 @@ export default function (pi: ExtensionAPI) {
         currentCtx: null,
         currentInbound: null,
         definitionBody: null,
+        liveTools: new Map(),
+        liveStatus: "idle",
     };
+
+    registerSessionLive(pi, state);
 
     // Session-lifecycle resources owned here, not shared with other modules.
     let server: net.Server | null = null;
@@ -245,6 +252,7 @@ export default function (pi: ExtensionAPI) {
             pid: process.pid,
             endpoint,
             cwd,
+            session_file: ctx.sessionManager?.getSessionFile?.(),
             started_at: nowIso(),
             explicit,
             version: 1,
@@ -314,6 +322,7 @@ export default function (pi: ExtensionAPI) {
                     pid: process.pid,
                     endpoint: state.identity.endpoint,
                     cwd: state.identity.cwd,
+                    session_file: ctx?.sessionManager?.getSessionFile?.(),
                     started_at: state.identity.started_at,
                     explicit: state.identity.explicit,
                     version: 1,
@@ -384,6 +393,7 @@ export default function (pi: ExtensionAPI) {
         // after the notification snapshot below. handlePrompt/handleResponse
         // nack while this flag is set.
         state.shuttingDown = true;
+        state.closeSessionViewer?.();
         if (pingTimer) { try { clearInterval(pingTimer); } catch { /* ignore */ } pingTimer = null; }
         if (keepaliveTimer) { try { clearInterval(keepaliveTimer); } catch { /* ignore */ } keepaliveTimer = null; }
         if (server) {

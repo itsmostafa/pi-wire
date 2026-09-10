@@ -16,12 +16,20 @@ function registryFilePath(name: string): string {
     return path.join(agentsDir(), `${name}.json`);
 }
 
+function sanitizeRegistryEntry(entry: RegistryEntry): RegistryEntry {
+    if (entry.session_file === undefined || typeof entry.session_file === "string") return entry;
+    const sanitized = { ...entry };
+    delete sanitized.session_file;
+    return sanitized;
+}
+
 export function writeRegistryAtomic(entry: RegistryEntry): string {
     const dir = agentsDir();
     fs.mkdirSync(dir, { recursive: true });
-    const final = registryFilePath(entry.name);
+    const safeEntry = sanitizeRegistryEntry(entry);
+    const final = registryFilePath(safeEntry.name);
     const tmp = `${final}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(entry, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(safeEntry, null, 2));
     fs.renameSync(tmp, final);
     return final;
 }
@@ -42,7 +50,7 @@ function readAllRegistryEntries(): RegistryEntry[] {
             const raw = fs.readFileSync(path.join(dir, f), "utf-8");
             const parsed = JSON.parse(raw) as RegistryEntry;
             if (parsed && typeof parsed.session_id === "string") {
-                out.push(parsed);
+                out.push(sanitizeRegistryEntry(parsed));
             }
         } catch {
             // skip malformed

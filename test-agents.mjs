@@ -9,6 +9,11 @@ import { join } from "node:path";
 import { register, syncBuiltinESMExports } from "node:module";
 import test from "node:test";
 
+// The viewer only opens session files under pi's own sessions dir; these tests
+// never read the file, so the root just has to exist as a path prefix.
+process.env.PI_CODING_AGENT_DIR = join(tmpdir(), `pi-wire-agents-${process.pid}`);
+const sessionsRoot = join(process.env.PI_CODING_AGENT_DIR, "sessions");
+
 const wireRoot = await mkdtemp("/tmp/piw-");
 process.env.PI_WIRE_DIR = wireRoot;
 register(new URL("./wire-test-resolve-hook.mjs", import.meta.url));
@@ -16,10 +21,12 @@ register(new URL("./wire-test-resolve-hook.mjs", import.meta.url));
 const { parseArgs } = await import("@earendil-works/pi-coding-agent");
 const { configureAgentDefinition, selectAgentDefinition } = await import("./extensions/wire/agents.ts");
 const { default: wireExtension } = await import("./extensions/wire.ts");
-const { NamedEditor, renderPool } = await import("./extensions/wire/widget.ts");
+const { NamedEditor, poolRows, renderPool } = await import("./extensions/wire/widget.ts");
 const { hexFg } = await import("./extensions/wire/util.ts");
 const { parseEnvInt } = await import("./extensions/wire/types.ts");
 const { invalidateEntryCache, liveEntries } = await import("./extensions/wire/registry.ts");
+const { pingPeer } = await import("./extensions/wire/pool.ts");
+const { sendEnvelope } = await import("./extensions/wire/transport.ts");
 const { visibleWidth } = await import("@mariozechner/pi-tui");
 
 test.after(async () => { await rm(wireRoot, { recursive: true, force: true }); });
@@ -50,11 +57,13 @@ async function withFixture(run) {
 function piMock(options = {}) {
     const flags = { ...options.flags };
     const hooks = new Map();
-    const calls = { active: [...(options.active ?? ["wire_list", "wire_send", "wire_respond"])], setModel: 0, setTools: 0, setThinking: 0, entries: [], notices: [], tools: new Map(), shortcuts: new Map(), messages: [] };
+    const calls = { active: [...(options.active ?? ["wire_list", "wire_send", "wire_respond"])], setModel: 0, setTools: 0, setThinking: 0, entries: [], notices: [], custom: [], tools: new Map(), shortcuts: new Map(), messages: [] };
     let thinking = options.thinking ?? "medium";
     const ctx = {
         cwd: options.cwd ?? process.cwd(),
+        mode: options.mode ?? "tui",
         hasUI: options.hasUI ?? true,
+        sessionManager: { getSessionFile: () => options.sessionFile, getBranch: () => [] },
         model: { provider: "base", id: "baseline" },
         isProjectTrusted: () => options.trusted ?? true,
         getContextUsage: () => undefined,
@@ -64,6 +73,7 @@ function piMock(options = {}) {
         },
         ui: {
             notify: (message, type) => calls.notices.push({ message, type }),
+            custom: async (...args) => { calls.custom.push(args); },
             setStatus: () => {}, setWidget: () => {}, setEditorComponent: () => {},
         },
     };
@@ -550,8 +560,10 @@ test("definition peers discover and exchange requests/replies through unchanged 
     process.env.PI_CODING_AGENT_DIR = join(user, "..");
     await cleanWire();
     for (const name of ["sender", "receiver"]) await definition(user, `${name}.md`, `name: ${name}\ndescription: ${name} purpose\ntools: []`);
-    const sender = piMock({ cwd, flags: { "wire-agent": "sender" } });
-    const receiver = piMock({ cwd, flags: { "wire-agent": "receiver" } });
+    const senderSession = join(cwd, "sender.json");
+    const receiverSession = join(cwd, "receiver.json");
+    const sender = piMock({ cwd, sessionFile: senderSession, flags: { "wire-agent": "sender" } });
+    const receiver = piMock({ cwd, sessionFile: receiverSession, flags: { "wire-agent": "receiver" } });
     try {
         await withArgv([], () => start(sender));
         await withArgv([], () => start(receiver));
@@ -559,6 +571,20 @@ test("definition peers discover and exchange requests/replies through unchanged 
         const now = Date.now;
         Date.now = () => now() + 10000;
         try {
+            const receiverEntry = JSON.parse(await readFile(join(wireRoot, "agents", "receiver.json"), "utf8"));
+            assert.equal(receiverEntry.session_file, receiverSession);
+            const senderEntry = JSON.parse(await readFile(join(wireRoot, "agents", "sender.json"), "utf8"));
+            const card = await pingPeer({ identity: senderEntry }, receiverEntry.endpoint);
+            assert.equal(card.session_file, receiverSession);
+            for (const handler of receiver.hooks.get("message_update") ?? []) {
+                await handler({ message: { role: "assistant", content: [{ type: "text", text: "unsaved live token" }] } }, receiver.ctx);
+            }
+            const snapshot = await sendEnvelope(receiverEntry.endpoint, {
+                type: "session_snapshot", msg_id: "live-view", sender_session: senderEntry.session_id,
+                sender_endpoint: senderEntry.endpoint, hops: 0, timestamp: new Date().toISOString(),
+            });
+            assert.equal(snapshot.status, "running");
+            assert.match(snapshot.source, /unsaved live token/);
             const listed = await sender.calls.tools.get("wire_list").execute("list", {});
             assert.equal(listed.details.agents.find((agent) => agent.name === "receiver").purpose, "receiver purpose");
             const sent = await sender.calls.tools.get("wire_send").execute("send", { target: "receiver", prompt: "Review this" });
@@ -576,11 +602,11 @@ test("definition peers discover and exchange requests/replies through unchanged 
 
 const plainTheme = { fg: (_role, text) => text, bg: (_role, text) => `[${text}]` };
 
-function poolState(count, poolSelected = null) {
+function poolState(count, poolSelected = null, sessionFiles = {}) {
     const peerCards = new Map();
     for (let i = 0; i < count; i++) {
         const name = String.fromCharCode(97 + i);
-        peerCards.set(`session-${name}`, { name, purpose: "", model: "m", color: "#ffffff", context_used_pct: 10, staleCount: 0 });
+        peerCards.set(`session-${name}`, { name, purpose: "", model: "m", color: "#ffffff", context_used_pct: 10, staleCount: 0, session_file: sessionFiles[name] });
     }
     return { identity: null, includeExplicit: false, poolSelected, peerCards };
 }
@@ -624,12 +650,24 @@ test("pool window follows the selection and clamps it to the live peers", () => 
     assert.equal(empty.poolSelected, null);
 });
 
+test("pool rows retain session paths and live endpoints from cached registry entries", () => {
+    const state = poolState(1, null, { a: "/tmp/card-session.json" });
+    const rows = poolRows(state, [
+        { session_id: "session-a", name: "a", endpoint: "/tmp/a.sock" },
+        { session_id: "session-b", name: "b", purpose: "", model: "m", color: "#fff", pid: 1, endpoint: "/tmp/b.sock", cwd: "", session_file: "/tmp/registry-session.json", started_at: "", explicit: false, version: 1 },
+    ]);
+    assert.deepEqual(rows.map(({ name, session_file, endpoint }) => ({ name, session_file, endpoint })), [
+        { name: "a", session_file: "/tmp/card-session.json", endpoint: "/tmp/a.sock" },
+        { name: "b", session_file: "/tmp/registry-session.json", endpoint: "/tmp/b.sock" },
+    ]);
+});
+
 test("pool widget keeps a fixed height, highlights one row, and hints the keys", () => {
     const browsing = renderPool(poolState(5, 3), 120, plainTheme, []);
     assert.equal(browsing.length, 5); // 3 rows + 2 rules
     assert.equal(browsing.filter((line) => line.startsWith("[")).length, 1); // one highlighted row
     assert.ok(browsing.find((line) => line.startsWith("[")).includes("d" + " ".repeat(11)));
-    assert.match(browsing.at(-1), /4 of 5 · ↑↓ move · esc back/);
+    assert.match(browsing.at(-1), /4 of 5 · ↑↓ move · enter view · esc back/);
 
     const idle = renderPool(poolState(5), 120, plainTheme, []);
     assert.equal(idle.filter((line) => line.startsWith("[")).length, 0);
@@ -646,20 +684,23 @@ test("pool widget keeps a fixed height, highlights one row, and hints the keys",
 // tests populate — empty it so only the peers this fixture declares show up.
 // Invalidating beats skipping the clock forward: a faked future timestamp would
 // stick in the cache and starve later tests of refreshes for that long.
-async function poolEditor(peers) {
+async function poolEditor(peers, { currentCtx = null, sessionFiles = {}, poolSelected = null } = {}) {
     await cleanWire();
     invalidateEntryCache();
     liveEntries();
     const ids = { "\u001b[A": "tui.editor.cursorUp", "\u001b[B": "tui.editor.cursorDown", "\u001b[D": "tui.editor.cursorLeft", "\u001b": "app.interrupt" };
-    const keybindings = { matches: (data, id) => ids[data] === id, getKeys: () => [], getDefinition: () => ({ description: "" }) };
+    const keybindings = {
+        matches: (data, id) => data === "\r" ? id === "tui.select.confirm" || id === "tui.input.submit" : ids[data] === id,
+        getKeys: () => [], getDefinition: () => ({ description: "" }),
+    };
     const tui = { requestRender() {}, terminal: { rows: 40, columns: 80 } };
-    const state = { ...poolState(peers), currentCtx: null };
+    const state = { ...poolState(peers, poolSelected, sessionFiles), currentCtx };
     const editor = new NamedEditor(tui, { borderColor: (t) => t, selectList: {} }, keybindings, "", state);
     editor.render(80); // establishes the width the visual-line map needs
     return { editor, state };
 }
 
-const DOWN = "\u001b[B", UP = "\u001b[A", LEFT = "\u001b[D", ESC = "\u001b";
+const DOWN = "\u001b[B", UP = "\u001b[A", LEFT = "\u001b[D", ESC = "\u001b", ENTER = "\r";
 
 test("named editor uses the identity color for both borders and its name", () => {
     const color = "#C792EA";
@@ -738,6 +779,78 @@ test("down stays in the editor when there are no peers to browse", async () => {
     const { editor, state } = await poolEditor(0);
     editor.handleInput(DOWN);
     assert.equal(state.poolSelected, null);
+});
+
+test("Enter views the selected peer without submitting or clearing the draft", async () => {
+    const mock = piMock();
+    const { editor, state } = await poolEditor(1, { currentCtx: mock.ctx, sessionFiles: { a: join(sessionsRoot, "peer-session.json") } });
+    const submitted = [];
+    editor.onSubmit = (text) => submitted.push(text);
+    editor.setText("unfinished draft");
+    editor.handleInput(DOWN);
+    assert.equal(state.poolSelected, 0);
+    editor.handleInput(ENTER);
+
+    assert.equal(state.poolSelected, null);
+    assert.equal(mock.calls.custom.length, 1);
+    assert.equal(typeof mock.calls.custom[0][0], "function"); // Factory is passed to Pi, not run by this mock.
+    assert.deepEqual(submitted, []);
+    assert.equal(editor.getText(), "unfinished draft");
+    await Promise.resolve(); // Let the immediately-resolved custom UI clean up.
+});
+
+test("Enter without pool focus still submits the draft", async () => {
+    const mock = piMock();
+    const { editor, state } = await poolEditor(1, { currentCtx: mock.ctx, sessionFiles: { a: join(sessionsRoot, "peer-session.json") } });
+    const submitted = [];
+    editor.onSubmit = (text) => submitted.push(text);
+    editor.setText("send this");
+    editor.handleInput(ENTER);
+
+    assert.equal(state.poolSelected, null);
+    assert.deepEqual(submitted, ["send this"]);
+    assert.equal(editor.getText(), "");
+    assert.equal(mock.calls.custom.length, 0);
+});
+
+test("Enter arriving with autocomplete after pool focus goes to autocomplete", async () => {
+    const mock = piMock();
+    const { editor, state } = await poolEditor(1, { currentCtx: mock.ctx, sessionFiles: { a: join(sessionsRoot, "peer-session.json") } });
+    const submitted = [];
+    editor.onSubmit = (text) => submitted.push(text);
+    editor.handleInput(DOWN);
+    editor.setText("dra");
+    editor.setAutocompleteProvider({
+        getSuggestions: async () => null,
+        applyCompletion: () => ({ lines: ["draft"], cursorLine: 0, cursorCol: 5 }),
+    });
+    editor.applyAutocompleteSuggestions({ prefix: "dra", items: [{ value: "draft", label: "draft" }] }, "regular");
+    editor.handleInput(ENTER);
+
+    assert.equal(state.poolSelected, null);
+    assert.equal(mock.calls.custom.length, 0);
+    assert.deepEqual(submitted, []);
+    assert.equal(editor.getText(), "draft");
+});
+
+test("Enter without a usable session path or live endpoint warns instead of submitting", async () => {
+    for (const sessionFile of [undefined, "relative/session.json", "/tmp/outside-the-sessions-dir.json"]) {
+        const mock = piMock();
+        const { editor, state } = await poolEditor(1, { currentCtx: mock.ctx, sessionFiles: { a: sessionFile } });
+        const submitted = [];
+        editor.onSubmit = (text) => submitted.push(text);
+        editor.setText("keep this draft");
+        editor.handleInput(DOWN);
+        assert.equal(state.poolSelected, 0);
+        editor.handleInput(ENTER);
+
+        assert.equal(state.poolSelected, null);
+        assert.equal(mock.calls.custom.length, 0);
+        assert.deepEqual(submitted, []);
+        assert.equal(editor.getText(), "keep this draft");
+        assert.equal(mock.calls.notices.at(-1).type, "warning");
+        assert.match(mock.calls.notices.at(-1).message, /no saved session path/);
+    }
 });
 
 test("browsing yields to abort and to a late autocomplete instead of eating keys", async () => {
