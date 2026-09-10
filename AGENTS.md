@@ -19,10 +19,14 @@ the same machine via Unix sockets. Multi-file TypeScript extension (entry +
   - `transport.ts` — socket bind, line framing, envelope send
   - `server.ts` — inbound connection handlers, respond dispatch
   - `widget.ts` — `NamedEditor` + live pool widget. The editor owns the pool list's keyboard: pi routes keys to the focused editor and never to widgets, so wire installs its editor on every UI session. Pi's `setEditorComponent` replaces rather than composes — an extension loaded alongside wire that also installs an editor will lose it.
+  - `session-view.ts` — read-only peer-session overlay opened with Enter; polls live snapshots only while open, with saved-file fallback.
+  - `session-live.ts` — in-memory assistant/tool event capture and bounded `session_snapshot` replies; never resumes or writes sessions.
   - `pool.ts` — ping cycle, peer discovery, target resolution
   - `tools.ts` — `wire_list` / `wire_send` / `wire_respond`
 - `test-async.mjs` — stdlib-only tests; asserts the async send/respond contract stays async across all extension sources.
-- `test-agents.mjs` — definition parsing/selection and mocked extension-lifecycle tests; uses an installed Pi package's real parsers.
+- `test-agents.mjs` — definition parsing/selection, pool keyboard, and mocked extension-lifecycle tests; uses an installed Pi package's real parsers.
+- `test-session-view.mjs` — saved-branch rendering, streaming refresh, scrolling, and viewer cleanup checks.
+- `test-session-live.mjs` — unsaved assistant/tool snapshots, completion ordering, byte limits, and shutdown checks.
 - `wire-test-resolve-hook.mjs` — test-only loader for extensionless TS imports and installed Pi packages.
 - `.pi/settings.json` — project-local install; plain `pi` from repo root loads the extension.
 - `Taskfile.yml` — `task check` (lint + test in parallel), `task lint`, `task test`; holds the pinned oxlint version.
