@@ -50,7 +50,8 @@ async function withFixture(run) {
 function piMock(options = {}) {
     const flags = { ...options.flags };
     const hooks = new Map();
-    const calls = { active: [...(options.active ?? ["wire_list", "wire_send", "wire_respond"])], setModel: 0, setTools: 0, entries: [], notices: [], tools: new Map(), shortcuts: new Map(), messages: [] };
+    const calls = { active: [...(options.active ?? ["wire_list", "wire_send", "wire_respond"])], setModel: 0, setTools: 0, setThinking: 0, entries: [], notices: [], tools: new Map(), shortcuts: new Map(), messages: [] };
+    let thinking = options.thinking ?? "medium";
     const ctx = {
         cwd: options.cwd ?? process.cwd(),
         hasUI: options.hasUI ?? true,
@@ -89,7 +90,15 @@ function piMock(options = {}) {
             if (options.setModel === "throw") throw new Error("model failed");
             if (options.setModel === false) return false;
             ctx.model = model;
+            // Pi's setModel re-derives the level (_getThinkingLevelForModelSwitch).
+            if (options.modelThinking) thinking = options.modelThinking;
             return true;
+        },
+        getThinkingLevel: () => thinking,
+        // clampEffort stands in for the host clamping to model capability.
+        setThinkingLevel: (level) => {
+            calls.setThinking++;
+            thinking = options.clampEffort ?? level;
         },
     };
     wireExtension(pi);
@@ -125,14 +134,16 @@ async function runBeforeAgent(mock, prompt = "base") {
 }
 
 test("definitions use Pi frontmatter parsing for BOM, CRLF, quoted fields, YAML tools, and empty allowlists", async () => withFixture(async ({ user, cwd }) => {
-    await writeFile(join(user, "reviewer.md"), "\ufeff---\r\nname: \"reviewer\"\r\ndescription: 'Reviews changes'\r\ntools: [read, grep]\r\nmodel: vendor/model/with:part\r\ncolor: \"#C792EA\"\r\n---\r\nBe precise.\r\n");
+    await writeFile(join(user, "reviewer.md"), "\ufeff---\r\nname: \"reviewer\"\r\ndescription: 'Reviews changes'\r\ntools: [read, grep]\r\nmodel: vendor/model/with:part\r\neffort: high\r\ncolor: \"#C792EA\"\r\n---\r\nBe precise.\r\n");
     await definition(user, "none.md", 'name: none\ndescription: none\ntools: ""');
     await definition(user, "also-none.md", "name: also-none\ndescription: none\ntools: []");
     const agent = selectAgentDefinition(cwd, "user", "reviewer", { userDir: user });
     assert.deepEqual(agent.tools, ["read", "grep"]);
     assert.equal(agent.model, "vendor/model/with:part");
+    assert.equal(agent.effort, "high");
     assert.equal(agent.color, "#C792EA");
     assert.equal(agent.body, "Be precise.");
+    assert.equal(selectAgentDefinition(cwd, "user", "none", { userDir: user }).effort, undefined); // optional
     assert.deepEqual(selectAgentDefinition(cwd, "user", "none", { userDir: user }).tools, []);
     assert.deepEqual(selectAgentDefinition(cwd, "user", "also-none", { userDir: user }).tools, []);
 }));
@@ -155,6 +166,7 @@ test("invalid null, number, map, color, and YAML-list values reject selected def
         name: ['null', '7', '[]', '{}', '""', '" "'],
         description: ['null', '7', '[]', '{}', '""', '" "'],
         model: ['null', '7', '[]', '{}', '""'],
+        effort: ['null', '7', '[]', '{}', '""', '"turbo"', '"HIGH"'],
         color: ['null', '7', '[]', '{}', '""', '"#ABC"', '"#GGGGGG"'],
         tools: ['null', '7', '{}', '[read, 2]', '[read, null]', '[[]]', '[{}]', '[" "]', '[""]'],
     };
@@ -216,6 +228,41 @@ test("configure validates model/auth/tools/effective wire tools before mutation"
     await assert.rejects(configureAgentDefinition(piMock({ auth: false }).pi, piMock({ auth: false }).ctx, definition, {}), /authentication/);
 });
 
+test("effort is asserted after the model switch, survives as --thinking, and yields to an explicit --model", async () => {
+    const definition = { name: "reviewer", description: "review", tools: ["read"], model: "vendor/model/with:part", effort: "low", body: "", source: "user", filePath: "agent.md" };
+    // modelThinking reproduces Pi resetting the level on every model switch, so
+    // a final level of "low" can only mean effort was applied after the model.
+    const applied = piMock({ modelThinking: "medium" });
+    await configureAgentDefinition(applied.pi, applied.ctx, definition, {});
+    assert.equal(applied.pi.getThinkingLevel(), "low");
+
+    // Omitted effort is not "medium" or any default of ours: the session keeps
+    // whatever level it already had, and the setter is never called.
+    const omitted = piMock({ thinking: "xhigh" });
+    await configureAgentDefinition(omitted.pi, omitted.ctx, { ...definition, effort: undefined }, {});
+    assert.equal(omitted.calls.setThinking, 0);
+    assert.equal(omitted.pi.getThinkingLevel(), "xhigh");
+
+    // --thinking outranks the definition, and must survive the model switch that
+    // wire itself performs — Pi's switch would otherwise reset it to "medium".
+    const flag = piMock({ modelThinking: "medium" });
+    await configureAgentDefinition(flag.pi, flag.ctx, definition, { thinking: "high" });
+    assert.equal(flag.pi.getThinkingLevel(), "high");
+
+    // An explicit --model: wire switches no model, and Pi already resolved any
+    // `provider/id:level` suffix, so the level is left entirely alone.
+    const cliModel = piMock({ thinking: "xhigh" });
+    await configureAgentDefinition(cliModel.pi, cliModel.ctx, definition, { model: "vendor/model/with:part:high" });
+    assert.equal(cliModel.calls.setThinking, 0);
+    assert.equal(cliModel.pi.getThinkingLevel(), "xhigh");
+
+    // A clamped CLI level is Pi's business, not a wire startup failure.
+    // (The definition's own level failing closed is covered at lifecycle level.)
+    const clampedFlag = piMock({ clampEffort: "off" });
+    await configureAgentDefinition(clampedFlag.pi, clampedFlag.ctx, { ...definition, effort: undefined }, { thinking: "xhigh" });
+    assert.equal(clampedFlag.pi.getThinkingLevel(), "off");
+});
+
 test("explicit CLI tool options skip validation of the discarded definition allowlist", async () => {
     const definition = { name: "reviewer", description: "review", tools: ["grep", "missing"], body: "", source: "user", filePath: "agent.md" };
     const mock = piMock();
@@ -274,7 +321,7 @@ test("actual lifecycle fail-closes malformed, ambiguous, invalid overrides, setM
 
 test("actual lifecycle applies precedence, effective model, collision suffix, prompt body, shutdown, reload, and legacy startup", async () => withFixture(async ({ user, cwd }) => {
     process.env.PI_CODING_AGENT_DIR = join(user, "..");
-    await definition(user, "reviewer.md", "name: reviewer\ndescription: definition\ntools: [read]\nmodel: vendor/model/with:part\ncolor: '#C792EA'", "persona one");
+    await definition(user, "reviewer.md", "name: reviewer\ndescription: definition\ntools: [read]\nmodel: vendor/model/with:part\neffort: low\ncolor: '#C792EA'", "persona one");
     await cleanWire();
     await mkdir(join(wireRoot, "agents"), { recursive: true });
     await writeFile(join(wireRoot, "agents", "reviewer.json"), JSON.stringify({ session_id: "existing", name: "reviewer", pid: process.pid }), "utf8");
@@ -287,6 +334,7 @@ test("actual lifecycle applies precedence, effective model, collision suffix, pr
     assert.equal(entry.purpose, "definition"); // No --purpose flag: the definition description is the only source.
     assert.equal(entry.color, "#112233");
     assert.equal(entry.model, "baseline"); // --model is authoritative; definition was still validated.
+    assert.equal(first.calls.setThinking, 0); // An explicit --model leaves the level to Pi.
     assert.deepEqual(first.calls.active, ["wire_list", "wire_send", "wire_respond"]); // -t preserves Pi's active set.
     assert.equal((await runBeforeAgent(first)).systemPrompt, "base\n\npersona one");
     assert.equal((await runBeforeAgent(first)).systemPrompt, "base\n\npersona one");
@@ -303,6 +351,7 @@ test("actual lifecycle applies precedence, effective model, collision suffix, pr
     assert.equal(collisionEntry.purpose, "definition");
     assert.equal(collisionEntry.color, "#C792EA");
     assert.equal(collisionEntry.model, "model/with:part");
+    assert.equal(collision.pi.getThinkingLevel(), "low"); // No CLI level: the definition applies.
     assert.deepEqual(collision.calls.active, ["read", "wire_list", "wire_send", "wire_respond"]);
     await shutdown(collision);
 
@@ -341,6 +390,9 @@ test("startup failures never bind, create storage, or activate a persona in UI o
         { fields: valid, options: { auth: false }, args: ["--model", "explicit"], error: /authentication/ },
         { fields: valid, options: { setModel: false }, error: /could not apply/, modelCalls: 1 },
         { fields: valid, options: { setModel: "throw" }, error: /model failed/, modelCalls: 1 },
+        // The model applied before effort failed, so the unwind sets it back: two calls.
+        { fields: `${valid}\neffort: xhigh`, options: { clampEffort: "medium" }, error: /could not apply effort/, modelCalls: 2 },
+        { fields: `${valid}\neffort: turbo`, error: /effort must be one of/ },
         { fields: valid, options: { active: ["read"] }, args: ["--no-tools"], error: /required wire tools/ },
         { fields: valid, flags: { "wire-agent-scope": "bad" }, error: /wire-agent-scope/ },
         { fields: valid, flags: { "wire-agent-scope": "both" }, project: "name: reviewer\ndescription: valid\ntools: null", error: /tools must/ },
@@ -371,16 +423,18 @@ test("startup failures never bind, create storage, or activate a persona in UI o
     }
 }));
 
-test("a failed bind reverts the definition's model and tool set", async (t) => withFixture(async ({ user, cwd }) => {
+test("a failed bind reverts the definition's model, effort, and tool set", async (t) => withFixture(async ({ user, cwd }) => {
     process.env.PI_CODING_AGENT_DIR = join(user, "..");
     t.mock.method(net.Server.prototype, "listen", () => { throw new Error("EADDRINUSE"); });
-    await definition(user, "reviewer.md", "name: reviewer\ndescription: valid\nmodel: vendor/model/with:part\ntools: read", "persona");
+    await definition(user, "reviewer.md", "name: reviewer\ndescription: valid\nmodel: vendor/model/with:part\neffort: low\ntools: read", "persona");
     await cleanWire();
     const mock = piMock({ cwd, flags: { "wire-agent": "reviewer" } });
     try {
         await withArgv([], () => start(mock));
         assert.match(mock.calls.notices.at(-1).message, /bind failed/);
         assert.deepEqual(mock.ctx.model, { provider: "base", id: "baseline" }); // model restored
+        assert.equal(mock.pi.getThinkingLevel(), "medium"); // effort restored
+        assert.equal(mock.calls.setThinking, 2); // applied, then reverted
         assert.equal(mock.calls.setTools, 2); // applied, then reverted
         assert.deepEqual(mock.calls.active, wireTools);
         assert.equal(mock.calls.entries.length, 0);
