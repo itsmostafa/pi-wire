@@ -24,8 +24,8 @@ const { default: wireExtension } = await import("./extensions/wire.ts");
 const { NamedEditor, poolRows, renderPool } = await import("./extensions/wire/widget.ts");
 const { hexFg } = await import("./extensions/wire/util.ts");
 const { parseEnvInt } = await import("./extensions/wire/types.ts");
-const { invalidateEntryCache, liveEntries } = await import("./extensions/wire/registry.ts");
-const { pingPeer } = await import("./extensions/wire/pool.ts");
+const { invalidateEntryCache, liveEntries, removeRegistryEntry, reserveRegistryEntry } = await import("./extensions/wire/registry.ts");
+const { pingPeer, refreshPool } = await import("./extensions/wire/pool.ts");
 const { sendEnvelope } = await import("./extensions/wire/transport.ts");
 const { visibleWidth } = await import("@mariozechner/pi-tui");
 
@@ -882,5 +882,65 @@ test("pool rows never outgrow a narrow terminal", () => {
     for (const width of [10, 20, 40]) {
         const lines = renderPool(poolState(5, 3), width, ansiTheme, []);
         for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}: ${JSON.stringify(line)}`);
+    }
+});
+
+// ━━ Concurrent registration ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function reservationEntry(session_id) {
+    return {
+        session_id, name: "alice", purpose: "", model: "m", color: "#ffffff", pid: process.pid,
+        endpoint: join(wireRoot, `${session_id}.sock`), cwd: "", started_at: new Date().toISOString(),
+        explicit: false, version: 1,
+    };
+}
+
+test("concurrent registrations get distinct names and only the owner can remove an entry", async () => {
+    await cleanWire();
+    invalidateEntryCache();
+    // Both pick "alice" before either has written — the exclusive create decides.
+    const first = reserveRegistryEntry(reservationEntry("sid-first"));
+    const second = reserveRegistryEntry(reservationEntry("sid-second"));
+    assert.equal(first.name, "alice");
+    assert.equal(second.name, "alice2");
+    assert.deepEqual((await registryFiles()).sort(), ["alice.json", "alice2.json"]);
+    assert.equal(JSON.parse(await readFile(first.file, "utf8")).session_id, "sid-first");
+    assert.equal(JSON.parse(await readFile(second.file, "utf8")).name, "alice2");
+
+    // A stale shutdown must not evict whoever holds the name now.
+    removeRegistryEntry("alice", "sid-someone-else");
+    assert.ok(existsSync(first.file));
+    removeRegistryEntry("alice", "sid-first");
+    assert.ok(!existsSync(first.file));
+    await cleanWire();
+    invalidateEntryCache();
+});
+
+test("a successful ping clears a stale peer's counter even when its card is unchanged", async () => {
+    await cleanWire();
+    const card = { name: "peer", purpose: "p", model: "m", color: "#ffffff", context_used_pct: 7 };
+    const endpoint = join(wireRoot, "stale-peer.sock");
+    await mkdir(join(wireRoot, "agents"), { recursive: true });
+    const peer = net.createServer((sock) => {
+        sock.once("data", () => sock.end(JSON.stringify({ type: "pong", agent_card: card }) + "\n"));
+    });
+    await new Promise((resolve) => peer.listen(endpoint, resolve));
+    try {
+        await writeFile(join(wireRoot, "agents", "peer.json"), JSON.stringify({
+            session_id: "sid-peer", name: "peer", purpose: "p", model: "m", color: "#ffffff",
+            pid: process.pid, endpoint, cwd: "", started_at: new Date().toISOString(), explicit: false, version: 1,
+        }));
+        invalidateEntryCache();
+        const state = {
+            identity: { session_id: "sid-self", endpoint: join(wireRoot, "self.sock") },
+            includeExplicit: false, currentCtx: null,
+            peerCards: new Map([["sid-peer", { ...card, staleCount: 3 }]]),
+        };
+        await refreshPool(state);
+        assert.equal(state.peerCards.get("sid-peer").staleCount, 0);
+    } finally {
+        await new Promise((resolve) => peer.close(resolve));
+        await cleanWire();
+        invalidateEntryCache();
     }
 });

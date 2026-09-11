@@ -74,10 +74,11 @@ export async function refreshPool(state: WireState): Promise<void> {
                 const differs = !prev
                     || (["name", "purpose", "model", "color", "context_used_pct", "session_file"] as const)
                         .some((k) => prev[k] !== next[k]);
-                if (differs) {
-                    state.peerCards.set(peer.session_id, next);
-                    changed = true;
-                }
+                // Always store: a recovered peer must get staleCount back to 0 even
+                // when its card fields are unchanged, or intermittent failures
+                // accumulate to eviction. `differs` only gates the repaint.
+                state.peerCards.set(peer.session_id, next);
+                if (differs || prev!.staleCount) changed = true;
             }
         }
 

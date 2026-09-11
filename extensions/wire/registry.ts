@@ -59,9 +59,17 @@ function readAllRegistryEntries(): RegistryEntry[] {
     return out;
 }
 
-export function removeRegistryEntry(name: string): void {
+/** Unlink an agent's file only if it still holds that agent's session — a name
+ *  freed by one agent can already be reserved by another.
+ *  ponytail: read→unlink TOCTOU vs a concurrent reserve; a registry lock is the
+ *  upgrade if two same-name starts ever collide on a dead entry — the keepalive's
+ *  unconditional self-heal write means such a collision flaps, it won't settle. */
+export function removeRegistryEntry(name: string, session_id: string): void {
+    const file = registryFilePath(name);
     try {
-        fs.unlinkSync(registryFilePath(name));
+        const owner = (JSON.parse(fs.readFileSync(file, "utf-8")) as RegistryEntry).session_id;
+        if (owner !== session_id) return;
+        fs.unlinkSync(file);
     } catch {
         // best-effort
     }
@@ -76,7 +84,7 @@ function pruneDeadEntries(): RegistryEntry[] {
             live.push(entry);
         } catch (e: any) {
             if (e && e.code === "ESRCH") {
-                removeRegistryEntry(entry.name);
+                removeRegistryEntry(entry.name, entry.session_id);
             } else {
                 // EPERM means the process exists but we can't signal it — treat as live.
                 live.push(entry);
@@ -110,13 +118,30 @@ export function peekCachedEntries(): RegistryEntry[] {
     return cachedEntries;
 }
 
-export function resolveUniqueName(desiredName: string): string {
-    // Returns a name that doesn't collide with any LIVE registered agent.
-    // pruneDeadEntries auto-removes ESRCH entries; we only care about live ones.
-    const live = pruneDeadEntries();
-    const liveNames = new Set(live.map(e => e.name));
-    if (!liveNames.has(desiredName)) return desiredName;
-    let n = 2;
-    while (liveNames.has(`${desiredName}${n}`)) n++;
-    return `${desiredName}${n}`;
+/** Claim a file for `entry` under the first free name derived from entry.name.
+ *  Publish by linking a fully written temp file into place: the link IS the
+ *  reservation, so two agents racing on one name can never both win it, and an
+ *  entry is only ever visible complete. A crash leaves the temp — named off the
+ *  .json suffix readers look for, so it blocks no name. */
+export function reserveRegistryEntry(entry: RegistryEntry): { name: string; file: string } {
+    fs.mkdirSync(agentsDir(), { recursive: true });
+    pruneDeadEntries(); // frees the names of agents that have exited
+    const safeEntry = sanitizeRegistryEntry(entry);
+    const tmp = `${registryFilePath(safeEntry.name)}.${safeEntry.session_id}.tmp`;
+    try {
+        for (let n = 1; ; n++) {
+            const name = n === 1 ? safeEntry.name : `${safeEntry.name}${n}`;
+            const file = registryFilePath(name);
+            // Rewritten per attempt — the entry carries the name we're claiming.
+            fs.writeFileSync(tmp, JSON.stringify({ ...safeEntry, name }, null, 2));
+            try {
+                fs.linkSync(tmp, file);
+                return { name, file };
+            } catch (err: any) {
+                if (err?.code !== "EEXIST") throw err;
+            }
+        }
+    } finally {
+        try { fs.unlinkSync(tmp); } catch { /* already gone */ }
+    }
 }
