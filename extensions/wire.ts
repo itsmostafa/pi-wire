@@ -34,7 +34,7 @@ import * as crypto from "node:crypto";
 import { WIRE_DIR, KEEPALIVE_INTERVAL_MS, PING_INTERVAL_MS } from "./wire/types";
 import type { RegistryEntry, WireState } from "./wire/types";
 import { fallbackColor, hexFg, isValidHex, makeEndpoint, nowIso, readCliFlags, readFrontmatterFromArgv } from "./wire/util";
-import { agentsDir, removeRegistryEntry, resolveUniqueName, writeRegistryAtomic } from "./wire/registry";
+import { agentsDir, removeRegistryEntry, reserveRegistryEntry, writeRegistryAtomic } from "./wire/registry";
 import { bindEndpoint } from "./wire/transport";
 import { createConnHandler, sendErrorResponse } from "./wire/server";
 import { NamedEditor, installPoolWidget } from "./wire/widget";
@@ -196,14 +196,6 @@ export default function (pi: ExtensionAPI) {
             .trim()
             .replace(/[^a-zA-Z0-9._-]+/g, "-")
             .replace(/^-+|-+$/g, "") || defaultName;
-        const name = resolveUniqueName(desiredName);
-        if (name !== desiredName) {
-            try {
-                pi.appendEntry("wire-log", { event: "name_collision", desired: desiredName, assigned: name });
-            } catch {
-                // best-effort
-            }
-        }
         const purpose = definition ? definition.description : fm.description || "";
 
         // Color: validate at every level; fall through invalid hex to next.
@@ -238,10 +230,11 @@ export default function (pi: ExtensionAPI) {
             return;
         }
 
-        // 4. Build + write registry entry atomically.
+        // 4. Build the entry and reserve its name atomically — the exclusive
+        // create settles collisions between agents starting concurrently.
         const entry: RegistryEntry = {
             session_id,
-            name,
+            name: desiredName,
             purpose,
             model,
             color,
@@ -254,13 +247,21 @@ export default function (pi: ExtensionAPI) {
             version: 1,
         };
         let registryFile: string;
+        let name: string;
         try {
-            registryFile = writeRegistryAtomic(entry);
+            ({ name, file: registryFile } = reserveRegistryEntry(entry));
         } catch (err) {
             ctx.ui?.notify?.(`📡 wire: registry write failed — ${err instanceof Error ? err.message : String(err)}`, "error");
             try { server?.close(); } catch { /* ignore */ }
             if (unwind) await unwind();
             return;
+        }
+        if (name !== desiredName) {
+            try {
+                pi.appendEntry("wire-log", { event: "name_collision", desired: desiredName, assigned: name });
+            } catch {
+                // best-effort
+            }
         }
 
         state.identity = {
@@ -411,7 +412,7 @@ export default function (pi: ExtensionAPI) {
             if (process.platform !== "win32") {
                 try { fs.unlinkSync(state.identity.endpoint); } catch { /* ignore */ }
             }
-            try { removeRegistryEntry(state.identity.name); } catch { /* ignore */ }
+            try { removeRegistryEntry(state.identity.name, state.identity.session_id); } catch { /* ignore */ }
             try {
                 pi.appendEntry("wire-log", { event: "shutdown", session_id: state.identity.session_id });
             } catch {
